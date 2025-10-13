@@ -1,0 +1,1904 @@
+﻿import React, { useState, useEffect, useRef } from 'react';
+
+// Type definitions
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  avatar: string;
+  role: 'super_admin' | 'admin' | 'project_manager' | 'developer' | 'tester'| 'employees';
+  organization_id: string;
+  is_active: boolean;
+  created_at: string;
+  last_seen?: string;
+  is_online?: boolean;
+}
+
+interface Organization {
+  id: string;
+  name: string;
+  domain: string;
+  plan: 'free' | 'pro' | 'enterprise';
+  user_count: number;
+  max_users: number;
+  created_at: string;
+}
+
+interface Issue {
+  id: string;
+  key: string;
+  title: string;
+  description: string;
+  issue_type: 'STORY' | 'TASK' | 'BUG' | 'EPIC';
+  priority: 'HIGHEST' | 'HIGH' | 'MEDIUM' | 'LOW' | 'LOWEST';
+  status: 'TODO' | 'IN_PROGRESS' | 'REVIEW' | 'DONE';
+  assignee_id: string | null;
+  reporter_id: string;
+  story_points: number | null;
+  created_at: string;
+  updated_at: string;
+  labels: string[];
+  organization_id: string;
+  comments?: Comment[];
+}
+
+interface Comment {
+  id: string;
+  content: string;
+  author_id: string;
+  issue_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface Notification {
+  id: string;
+  type: 'issue_created' | 'issue_updated' | 'issue_assigned' | 'comment_added' | 'status_changed' | 'user_joined';
+  title: string;
+  message: string;
+  read: boolean;
+  timestamp: string;
+  data?: any;
+}
+
+interface ToastMessage {
+  id: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  title: string;
+  message: string;
+  duration?: number;
+}
+
+// API Base URL
+const API_BASE_URL = 'http://localhost:4000';
+
+// Toast notification component
+const Toast: React.FC<{ toast: ToastMessage; onRemove: (id: string) => void }> = ({ toast, onRemove }) => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onRemove(toast.id);
+    }, toast.duration || 5000);
+    return () => clearTimeout(timer);
+  }, [toast.id, toast.duration, onRemove]);
+
+  const getToastColor = (type: ToastMessage['type']) => {
+    switch (type) {
+      case 'success': return '#36b37e';
+      case 'error': return '#ff5722';
+      case 'warning': return '#ffa500';
+      case 'info': return '#0052cc';
+    }
+  };
+
+  const getToastIcon = (type: ToastMessage['type']) => {
+    switch (type) {
+      case 'success': return '✅';
+      case 'error': return '❌';
+      case 'warning': return '⚠️';
+      case 'info': return 'ℹ️';
+    }
+  };
+
+  return (
+    <div style={{
+      background: 'white',
+      border: `1px solid ${getToastColor(toast.type)}`,
+      borderLeft: `4px solid ${getToastColor(toast.type)}`,
+      borderRadius: '8px',
+      padding: '16px',
+      marginBottom: '12px',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: '12px',
+      animation: 'slideIn 0.3s ease-out'
+    }}>
+      <span style={{ fontSize: '18px' }}>{getToastIcon(toast.type)}</span>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: '600', color: '#172b4d', marginBottom: '4px' }}>
+          {toast.title}
+        </div>
+        <div style={{ color: '#6b778c', fontSize: '14px' }}>
+          {toast.message}
+        </div>
+      </div>
+      <button
+        onClick={() => onRemove(toast.id)}
+        style={{
+          background: 'none',
+          border: 'none',
+          color: '#6b778c',
+          cursor: 'pointer',
+          fontSize: '16px'
+        }}
+      >
+        ×
+      </button>
+    </div>
+  );
+};
+
+// Toast container
+const ToastContainer: React.FC<{ toasts: ToastMessage[]; onRemove: (id: string) => void }> = ({ toasts, onRemove }) => (
+  <div style={{
+    position: 'fixed',
+    top: '80px',
+    right: '20px',
+    zIndex: 2000,
+    maxWidth: '400px'
+  }}>
+    {toasts.map(toast => (
+      <Toast key={toast.id} toast={toast} onRemove={onRemove} />
+    ))}
+  </div>
+);
+
+// Notification panel component
+const NotificationPanel: React.FC<{
+  notifications: Notification[];
+  onMarkAsRead: (id: string) => void;
+  onMarkAllAsRead: () => void;
+}> = ({ notifications, onMarkAsRead, onMarkAllAsRead }) => {
+  const [showNotifications, setShowNotifications] = useState(false);
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  const getNotificationIcon = (type: Notification['type']) => {
+    switch (type) {
+      case 'issue_created': return '??';
+      case 'issue_updated': return '?';
+      case 'issue_assigned': return '??';
+      case 'comment_added': return '??';
+      case 'status_changed': return '??';
+      case 'user_joined': return '??';
+      default: return '??';
+    }
+  };
+
+  const getNotificationMessage = (notification: Notification) => {
+    return notification.message;
+  };
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        onClick={() => setShowNotifications(!showNotifications)}
+        style={{
+          position: 'relative',
+          background: 'rgba(255,255,255,0.2)',
+          border: 'none',
+          borderRadius: '6px',
+          color: 'white',
+          padding: '8px 12px',
+          fontSize: '14px',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
+        }}
+      >
+        ?? Notifications
+        {unreadCount > 0 && (
+          <span style={{
+            position: 'absolute',
+            top: '-4px',
+            right: '-4px',
+            background: '#ff5722',
+            color: 'white',
+            borderRadius: '50%',
+            width: '20px',
+            height: '20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '11px',
+            fontWeight: '600'
+          }}>
+            {unreadCount}
+          </span>
+        )}
+      </button>
+      
+      {showNotifications && (
+        <div style={{
+          position: 'absolute',
+          top: '100%',
+          right: 0,
+          background: 'white',
+          border: '1px solid #e1e5e9',
+          borderRadius: '8px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+          padding: '12px',
+          width: '320px',
+          maxHeight: '400px',
+          overflowY: 'auto',
+          zIndex: 1000,
+          marginTop: '8px'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h4 style={{ margin: 0, fontSize: '14px', color: '#172b4d' }}>
+              Recent Activity
+            </h4>
+            {unreadCount > 0 && (
+              <button
+                onClick={onMarkAllAsRead}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#0052cc',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  textDecoration: 'underline'
+                }}
+              >
+                Mark all as read
+              </button>
+            )}
+          </div>
+          {notifications.length > 0 ? (
+            notifications.slice().reverse().map(notification => (
+              <div
+                key={notification.id}
+                style={{
+                  padding: '8px',
+                  borderRadius: '6px',
+                  marginBottom: '8px',
+                  background: notification.read ? 'transparent' : '#f0f8ff',
+                  border: notification.read ? '1px solid #f0f0f0' : '1px solid #e3f2fd',
+                  cursor: 'pointer'
+                }}
+                onClick={() => onMarkAsRead(notification.id)}
+              >
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '8px'
+              </div>
+            ))
+          ) : (
+            <div style={{ color: '#6b778c', fontSize: '13px', textAlign: 'center', padding: '20px' }}>
+              No recent activity
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+  // Load saved session on app start
+  useEffect(() => {
+    console.log('🚀 App starting up...');
+    console.log('📡 API Base URL:', API_BASE_URL);
+    
+    const savedToken = localStorage.getItem('accessToken');
+    const savedUser = localStorage.getItem('user');
+    const savedOrg = localStorage.getItem('organization');
+    
+    console.log('💾 Checking saved session...');
+    console.log('Token exists:', !!savedToken);
+    console.log('User exists:', !!savedUser);
+    console.log('Org exists:', !!savedOrg);
+    
+    if (savedToken && savedUser && savedOrg) {
+      try {
+        const parsedUser = JSON.parse(savedUser);
+        const parsedOrg = JSON.parse(savedOrg);
+        
+        console.log('✅ Restoring session for user:', parsedUser.email);
+        
+        setAccessToken(savedToken);
+        setUser(parsedUser);
+        setOrganization(parsedOrg);
+        setIsAuthenticated(true);
+        setCurrentView('dashboard');
+        
+        // Load data
+        loadIssues(savedToken);
+        loadUsers(savedToken);
+        connectWebSocket();
+      } catch (error) {
+        console.error('Error parsing saved session:', error);
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('user');
+        localStorage.removeItem('organization');
+      }
+    } else {
+      console.log('📝 No saved session found, showing auth screen');
+    }
+  }, []);
+
+  // API call helper
+  const apiCall = async (endpoint: string, options: RequestInit = {}) => {
+    const url = `${API_BASE_URL}${endpoint}`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string>),
+    };
+    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+
+    try {
+      const response = await fetch(url, { ...options, headers });
+      if (!response.ok) {
+        let errorData: any = null;
+        try { errorData = await response.json(); } catch {}
+        throw new Error((errorData && errorData.detail) || `HTTP ${response.status}`);
+      }
+      return await response.json();
+    } catch (error) {
+      throw error as any;
+    }
+  };
+
+
+    } catch (error) {
+      console.error('❌ Failed to load users:', error);
+      showToast('error', 'Loading Failed', 'Could not load users');
+    }
+  };
+
+  // Enhanced auth functions with logging
+  const login = async (email: string, password: string): Promise<boolean> => {
+    console.log('\n🔐 === LOGIN ATTEMPT ===');
+    console.log('📧 Email:', email);
+    console.log('🔒 Password length:', password.length);
+    
+    setIsLoading(true);
+    setAuthError('');
+
+    try {
+      const data = await apiCall('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      });
+
+      console.log('✅ Login successful!');
+      console.log('👤 User data:', data.user);
+      console.log('🏢 Organization:', data.organization);
+      console.log('🔑 Access token received:', data.access_token.substring(0, 10) + '...');
+
+      setUser(data.user);
+      setOrganization(data.organization);
+      setAccessToken(data.access_token);
+      setIsAuthenticated(true);
+      
+      // Store session
+      localStorage.setItem('accessToken', data.access_token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      localStorage.setItem('organization', JSON.stringify(data.organization));
+      
+      console.log('💾 Session saved to localStorage');
+      
+      setCurrentView('dashboard');
+      
+      // Load data
+      await loadIssues(data.access_token);
+      await loadUsers(data.access_token);
+      
+      // Connect WebSocket
+      connectWebSocket();
+      
+      showToast('success', 'Welcome Back!', `Logged in as ${data.user.name}`);
+      
+      setIsLoading(false);
+      console.log('🔐 === LOGIN COMPLETE ===\n');
+      return true;
+    } catch (error: any) {
+      console.error('❌ Login failed:', error.message);
+      setAuthError(error.message || 'Login failed');
+      showToast('error', 'Login Failed', error.message || 'Invalid credentials');
+      setIsLoading(false);
+      return false;
+    }
+  };
+
+    const signup = async () => {
+    setIsLoading(true);
+    setAuthError('');
+
+    if (signupMode === 'create_org') {
+      if (signupForm.password !== signupForm.confirmPassword) {
+        setAuthError('Passwords do not match');
+        showToast('error', 'Signup Failed', 'Passwords do not match');
+        setIsLoading(false);
+        return;
+      }
+      try {
+        const requestBody = {
+          email: signupForm.email,
+          password: signupForm.password,
+          name: signupForm.name,
+          organization_name: signupForm.organization_name
+        };
+        await apiCall('/api/auth/signup', { method: 'POST', body: JSON.stringify(requestBody) });
+        setOtpForm({ ...otpForm, email: signupForm.email });
+        setAuthMode('verify-otp');
+        showToast('info', 'Verification Required', 'Check backend console for the OTP code');
+      } catch (error: any) {
+        setAuthError(error.message || 'Signup failed');
+        showToast('error', 'Signup Failed', error.message || 'Account creation failed');
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      try {
+        const requestBody = {
+          email: signupForm.email,
+          password: signupForm.password,
+          name: signupForm.name
+        };
+        await apiCall('/api/auth/signup-member', { method: 'POST', body: JSON.stringify(requestBody) });
+        setOtpForm({ ...otpForm, email: signupForm.email });
+        setAuthMode('verify-otp');
+        showToast('info', 'Verification Required', 'Check backend console for the OTP code');
+      } catch (error: any) {
+        setAuthError(error.message || 'Signup failed');
+        showToast('error', 'Signup Failed', error.message || 'Signup to existing org failed');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+      
+    const verifyOTP = async () => {
+    setIsLoading(true);
+    setAuthError('');
+    try {
+      const body = { email: otpForm.email, otp: otpForm.otp };
+      const endpoint = signupMode === 'create_org' ? '/api/auth/verify-otp' : '/api/auth/verify-otp-member';
+      const data = await apiCall(endpoint, { method: 'POST', body: JSON.stringify(body) });
+
+      setAccessToken(data.access_token);
+      setUser(data.user);
+      setOrganization(data.organization);
+      setIsAuthenticated(true);
+      setCurrentView('dashboard');
+      fetchUsers(data.access_token);
+      fetchIssues(data.access_token);
+      connectWebSocket();
+      setAuthError(error.message || 'Verification failed');
+      showToast('error', 'Verification Failed', error.message || 'Invalid or expired code');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const logout = async () => {
+    console.log('👋 Logging out...');
+    
+    // Close WebSocket connection
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    
+    try {
+      await apiCall('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      console.log('✅ Logout API call successful');
+    } catch (error) {
+      console.error('❌ Logout error:', error);
+    }
+
+    // Clear local state
+    setUser(null);
+    setOrganization(null);
+    setAccessToken('');
+    setIsAuthenticated(false);
+    setCurrentView('auth');
+    setAuthMode('login');
+    setIssues([]);
+    setUsers([]);
+    setNotifications([]);
+    setToasts([]);
+    
+    // Clear storage
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('user');
+    localStorage.removeItem('organization');
+    
+    showToast('info', 'Logged Out', 'See you next time!');
+    console.log('✅ Logout complete - all data cleared');
+  };
+
+  const createIssue = async () => {
+    if (!newIssue.title.trim()) {
+      console.error('❌ Cannot create issue: Title is empty');
+      showToast('error', 'Validation Error', 'Issue title is required');
+      return;
+    }
+    
+    console.log('📝 Creating new issue:', newIssue.title);
+    
+    try {
+      const issueData = await apiCall('/api/issues', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: newIssue.title,
+          description: newIssue.description,
+          issue_type: newIssue.issue_type,
+          priority: newIssue.priority,
+          assignee_id: newIssue.assignee_id || null,
+          story_points: newIssue.story_points,
+          labels: newIssue.labels
+        }),
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      
+      console.log('✅ Issue created successfully:', issueData.key);
+      setIssues([...issues, issueData]);
+      setNewIssue({ 
+        title: '', 
+        description: '', 
+        issue_type: 'STORY', 
+        priority: 'MEDIUM', 
+        assignee_id: '', 
+        story_points: 1,
+        labels: []
+      });
+      setShowCreateModal(false);
+      
+      showToast('success', 'Issue Created', `${issueData.key}: ${issueData.title}`);
+      
+      addNotification({
+        type: 'issue_created',
+        title: 'Issue Created',
+        message: `You created ${issueData.key}: ${issueData.title}`,
+        read: false,
+        data: issueData
+      });
+    } catch (error: any) {
+      console.error('❌ Failed to create issue:', error.message);
+      setAuthError(error.message || 'Failed to create issue');
+      showToast('error', 'Creation Failed', error.message || 'Could not create issue');
+    }
+  };
+
+  const updateIssue = async (issueId: string, updates: Partial<Issue>) => {
+    console.log('📝 Updating issue:', issueId, updates);
+    try {
+      const updatedIssue = await apiCall(`/api/issues/${issueId}`, {
+        method: 'PUT',
+        body: JSON.stringify(updates),
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      
+      console.log('✅ Issue updated successfully');
+      setIssues(prev => prev.map(issue => 
+        issue.id === issueId ? updatedIssue : issue
+      ));
+      
+      showToast('success', 'Issue Updated', `${updatedIssue.key} has been updated`);
+      
+      addNotification({
+        type: 'issue_updated',
+        title: 'Issue Updated',
+        message: `You updated ${updatedIssue.key}`,
+        read: false,
+        data: updatedIssue
+      });
+    } catch (error: any) {
+      console.error('❌ Failed to update issue:', error.message);
+      setAuthError(error.message || 'Failed to update issue');
+      showToast('error', 'Update Failed', error.message || 'Could not update issue');
+    }
+  };
+
+  const addComment = async (issueId: string, content: string) => {
+    try {
+      const comment = await apiCall(`/api/issues/${issueId}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ content }),
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+      
+      setIssues(prev => prev.map(issue => 
+        issue.id === issueId 
+          ? { ...issue, comments: [...(issue.comments || []), comment] }
+          : issue
+      ));
+      
+      showToast('success', 'Comment Added', 'Your comment has been posted');
+    } catch (error: any) {
+      console.error('❌ Failed to add comment:', error.message);
+      showToast('error', 'Comment Failed', error.message || 'Could not add comment');
+    }
+  };
+
+  // Utility functions
+  const getTypeIcon = (type: Issue['issue_type']) => {
+    switch (type) {
+      case 'STORY': return '📖';
+      case 'TASK': return '✅';
+      case 'BUG': return '🐛';
+      case 'EPIC': return '⚡';
+    }
+  };
+
+  const getPriorityColor = (priority: Issue['priority']) => {
+    switch (priority) {
+      case 'HIGHEST': return '#cd1316';
+      case 'HIGH': return '#ea2f00';
+      case 'MEDIUM': return '#ffa500';
+      case 'LOW': return '#2d8738';
+      case 'LOWEST': return '#57a55a';
+    }
+  };
+
+  const getStatusColor = (status: Issue['status']) => {
+    switch (status) {
+      case 'DONE': return '#36b37e';
+      case 'IN_PROGRESS': return '#0052cc';
+      case 'REVIEW': return '#ffa500';
+      default: return '#42526e';
+    }
+  };
+
+  const getUserById = (userId: string | null) => {
+    if (!userId) return null;
+    return users.find(u => u.id === userId);
+  };
+
+  const getIssuesByStatus = (status: Issue['status']) => {
+    return issues.filter(issue => issue.status === status);
+  };
+
+  // Drag and Drop
+  const handleDragStart = (e: React.DragEvent, issue: Issue) => {
+    e.dataTransfer.setData('issueId', issue.id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e: React.DragEvent, newStatus: Issue['status']) => {
+    e.preventDefault();
+    const issueId = e.dataTransfer.getData('issueId');
+    if (issueId) {
+      updateIssue(issueId, { status: newStatus });
+    }
+  };
+
+  // Calculate metrics
+  const metrics = {
+    totalIssues: issues.length,
+    completedIssues: issues.filter(i => i.status === 'DONE').length,
+    inProgressIssues: issues.filter(i => i.status === 'IN_PROGRESS').length,
+    totalPoints: issues.reduce((sum, i) => sum + (i.story_points || 0), 0),
+    completedPoints: issues.filter(i => i.status === 'DONE').reduce((sum, i) => sum + (i.story_points || 0), 0),
+  };
+
+  // Render functions
+  const renderAuth = () => (
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '20px'
+    }}>
+      <div style={{
+        background: 'white',
+        borderRadius: '16px',
+        padding: '40px',
+        width: '100%',
+        maxWidth: '450px',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.15)'
+      }}>
+        <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+          <div style={{
+            width: '60px',
+            height: '60px',
+            background: 'linear-gradient(135deg, #667eea, #764ba2)',
+            borderRadius: '12px',
+            margin: '0 auto 16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+            fontSize: '24px',
+            fontWeight: 'bold'
+          }}>
+            <img 
+              src="/logo.png" 
+              alt="Shappe Logo" 
+              style={{
+                width: '120%',
+                height: '120%',
+                objectFit: 'contain'
+             }}
+           />
+          </div>
+          <h1 style={{ margin: 0, fontSize: '28px', fontWeight: '700', color: '#1a1a1a' }}>
+            Scope
+          </h1>
+          <p style={{ margin: '4px 0 0 0', color: '#666', fontSize: '16px' }}>
+            by Shappe Group
+          </p>
+        </div>
+
+        {authMode === 'login' && (
+          <div>
+            <h2 style={{ margin: '0 0 24px 0', fontSize: '24px', color: '#1a1a1a' }}>
+              Welcome Back
+            </h2>
+            
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#333' }}>
+                Email
+              </label>
+              <input
+                type="email"
+                value={loginForm.email}
+                onChange={(e) => {
+                  console.log('📧 Email input changed:', e.target.value);
+                  setLoginForm({...loginForm, email: e.target.value});
+                }}
+                style={{
+                  width: '100%',
+                  padding: '14px 16px',
+                  border: '2px solid #e1e5e9',
+                  borderRadius: '8px',
+                  fontSize: '16px',
+                  outline: 'none'
+                }}
+                placeholder="Enter your email"
+              />
+            </div>
+
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#333' }}>
+                Password
+              </label>
+              <input
+                type="password"
+                value={loginForm.password}
+                onChange={(e) => {
+                  console.log('🔒 Password input changed, length:', e.target.value.length);
+                  setLoginForm({...loginForm, password: e.target.value});
+                }}
+                style={{
+                  width: '100%',
+                  padding: '14px 16px',
+                  border: '2px solid #e1e5e9',
+                  borderRadius: '8px',
+                  fontSize: '16px',
+                  outline: 'none'
+                }}
+                placeholder="Enter your password"
+              />
+            </div>
+
+            {authError && (
+              <div style={{
+                background: '#fee',
+                border: '1px solid #fcc',
+                borderRadius: '8px',
+                padding: '12px',
+                marginBottom: '20px',
+                color: '#c33',
+                fontSize: '14px'
+              }}>
+                {authError}
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                console.log('🔑 Login button clicked');
+                login(loginForm.email, loginForm.password);
+              }}
+              disabled={isLoading || !loginForm.email || !loginForm.password}
+              style={{
+                width: '100%',
+                padding: '16px',
+                background: isLoading ? '#ccc' : 'linear-gradient(135deg, #667eea, #764ba2)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '16px',
+                fontWeight: '600',
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                marginBottom: '20px'
+              }}
+            >
+              {isLoading ? 'Signing In...' : 'Sign In'}
+            </button>
+
+            <p style={{ textAlign: 'center', color: '#666', fontSize: '14px' }}>
+              Don't have an account?{' '}
+              <button
+                onClick={() => {
+                  console.log('📝 Switching to signup mode');
+                  setAuthMode('signup');
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#667eea',
+                  textDecoration: 'underline',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Sign Up
+              </button>
+            </p>
+          </div>
+        )}
+
+        {authMode === 'signup' && (
+          <div>
+            <h2 style={{ margin: '0 0 24px 0', fontSize: '24px', color: '#1a1a1a' }}>
+              Create Account
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <button onClick={() => setSignupMode('create_org')}
+                style={{ padding: '8px 12px', borderRadius: '6px', border: signupMode==='create_org' ? '2px solid #667eea' : '1px solid #e1e5e9', background: signupMode==='create_org' ? '#eef2ff' : 'white', cursor: 'pointer' }}>
+                Create New Organization
+              </button>
+              <button onClick={() => setSignupMode('join_org')}
+                style={{ padding: '8px 12px', borderRadius: '6px', border: signupMode==='join_org' ? '2px solid #667eea' : '1px solid #e1e5e9', background: signupMode==='join_org' ? '#eef2ff' : 'white', cursor: 'pointer' }}>
+                Join Existing Organization
+              </button>
+            </div>
+            </h2>
+            
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#333' }}>
+                Full Name
+              </label>
+              <input
+                type="text"
+                value={signupForm.name}
+                onChange={(e) => setSignupForm({...signupForm, name: e.target.value})}
+                style={{
+                  width: '100%',
+                  padding: '14px 16px',
+                  border: '2px solid #e1e5e9',
+                  borderRadius: '8px',
+                  fontSize: '16px',
+                  outline: 'none'
+                }}
+                placeholder="John Doe"
+              />
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#333' }}>
+                Organization Name
+              </label>
+              <input
+                type="text"
+                value={signupForm.organization_name}
+                onChange={(e) => setSignupForm({...signupForm, organization_name: e.target.value})}
+                style={{
+                  width: '100%',
+                  padding: '14px 16px',
+                  border: '2px solid #e1e5e9',
+                  borderRadius: '8px',
+                  fontSize: '16px',
+                  outline: 'none'
+                }}
+                placeholder="Your Company Name"
+              />
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#333' }}>
+                Email
+              </label>
+              <input
+                type="email"
+                value={signupForm.email}
+                onChange={(e) => setSignupForm({...signupForm, email: e.target.value})}
+                style={{
+                  width: '100%',
+                  padding: '14px 16px',
+                  border: '2px solid #e1e5e9',
+                  borderRadius: '8px',
+                  fontSize: '16px',
+                  outline: 'none'
+                }}
+                placeholder="john@company.com"
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#333' }}>
+                  Password
+                </label>
+                <input
+                  type="password"
+                  value={signupForm.password}
+                  onChange={(e) => setSignupForm({...signupForm, password: e.target.value})}
+                  style={{
+                    width: '100%',
+                    padding: '14px 16px',
+                    border: '2px solid #e1e5e9',
+                    borderRadius: '8px',
+                    fontSize: '16px',
+                    outline: 'none'
+                  }}
+                  placeholder="Password"
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#333' }}>
+                  Confirm Password
+                </label>
+                <input
+                  type="password"
+                  value={signupForm.confirmPassword}
+                  onChange={(e) => setSignupForm({...signupForm, confirmPassword: e.target.value})}
+                  style={{
+                    width: '100%',
+                    padding: '14px 16px',
+                    border: '2px solid #e1e5e9',
+                    borderRadius: '8px',
+                    fontSize: '16px',
+                    outline: 'none'
+                  }}
+                  placeholder="Confirm Password"
+                />
+              </div>
+            </div>
+
+            {authError && (
+              <div style={{
+                background: '#fee',
+                border: '1px solid #fcc',
+                borderRadius: '8px',
+                padding: '12px',
+                marginBottom: '20px',
+                color: '#c33',
+                fontSize: '14px'
+              }}>
+                {authError}
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                console.log('📝 Signup button clicked');
+                signup();
+              }}
+              disabled={isLoading || !signupForm.name || !signupForm.email || !signupForm.password || (signupMode==='create_org' && !signupForm.organization_name)}
+              style={{
+                width: '100%',
+                padding: '16px',
+                background: isLoading ? '#ccc' : 'linear-gradient(135deg, #667eea, #764ba2)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '16px',
+                fontWeight: '600',
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                marginBottom: '20px'
+              }}
+            >
+              {isLoading ? 'Creating Account...' : 'Create Account'}
+            </button>
+
+            <p style={{ textAlign: 'center', color: '#666', fontSize: '14px' }}>
+              Already have an account?{' '}
+              <button
+                onClick={() => setAuthMode('login')}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#667eea',
+                  textDecoration: 'underline',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Sign In
+              </button>
+            </p>
+          </div>
+        )}
+
+        {authMode === 'verify-otp' && (
+          <div>
+            <h2 style={{ margin: '0 0 16px 0', fontSize: '24px', color: '#1a1a1a' }}>
+              Verify Your Email
+            </h2>
+            <p style={{ margin: '0 0 24px 0', color: '#666', fontSize: '14px' }}>
+              We've sent a verification code to {otpForm.email}. Check your backend console for the OTP.
+            </p>
+            
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#333' }}>
+                Verification Code
+              </label>
+              <input
+                type="text"
+                value={otpForm.otp}
+                onChange={(e) => {
+                  console.log('🔢 OTP input changed:', e.target.value);
+                  setOtpForm({...otpForm, otp: e.target.value});
+                }}
+                style={{
+                  width: '100%',
+                  padding: '14px 16px',
+                  border: '2px solid #e1e5e9',
+                  borderRadius: '8px',
+                  fontSize: '20px',
+                  textAlign: 'center',
+                  letterSpacing: '4px',
+                  outline: 'none'
+                }}
+                placeholder="123456"
+                maxLength={6}
+              />
+              <p style={{ margin: '8px 0 0 0', color: '#666', fontSize: '12px' }}>
+                Check your backend console for the 6-digit OTP
+              </p>
+            </div>
+
+            {authError && (
+              <div style={{
+                background: '#fee',
+                border: '1px solid #fcc',
+                borderRadius: '8px',
+                padding: '12px',
+                marginBottom: '20px',
+                color: '#c33',
+                fontSize: '14px'
+              }}>
+                {authError}
+              </div>
+            )}
+
+            <button
+              onClick={() => {
+                console.log('🔐 Verify OTP button clicked');
+                verifyOTP();
+              }}
+              disabled={isLoading || !otpForm.otp}
+              style={{
+                width: '100%',
+                padding: '16px',
+                background: isLoading ? '#ccc' : 'linear-gradient(135deg, #667eea, #764ba2)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '16px',
+                fontWeight: '600',
+                cursor: isLoading ? 'not-allowed' : 'pointer',
+                marginBottom: '20px'
+              }}
+            >
+              {isLoading ? 'Verifying...' : 'Verify & Continue'}
+            </button>
+
+            <div style={{ textAlign: 'center' }}>
+              <button
+                onClick={() => setAuthMode('signup')}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#667eea',
+                  textDecoration: 'underline',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                Back to Sign Up
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderHeader = () => (
+    <header style={{
+      height: '64px',
+      background: 'linear-gradient(135deg, #0052cc 0%, #2684ff 100%)',
+      color: 'white',
+      display: 'flex',
+      alignItems: 'center',
+      padding: '0 24px',
+      justifyContent: 'space-between',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <h1 style={{ margin: 0, fontSize: '1.6rem', fontWeight: '600' }}>Scope</h1>
+        <span style={{ marginLeft: '12px', fontSize: '0.9rem', opacity: 0.8 }}>by Shappe Group</span>
+        {organization && (
+          <span style={{ marginLeft: '20px', fontSize: '0.8rem', opacity: 0.7 }}>
+            {organization.name}
+          </span>
+        )}
+      </div>
+      
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <button
+          onClick={() => setCurrentView('dashboard')}
+          style={{
+            background: currentView === 'dashboard' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+            border: 'none',
+            borderRadius: '6px',
+            color: 'white',
+            padding: '8px 16px',
+            fontSize: '14px',
+            cursor: 'pointer'
+          }}
+        >
+          Dashboard
+        </button>
+        
+        <button
+          onClick={() => setCurrentView('board')}
+          style={{
+            background: currentView === 'board' ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+            border: 'none',
+            borderRadius: '6px',
+            color: 'white',
+            padding: '8px 16px',
+            fontSize: '14px',
+            cursor: 'pointer'
+          }}
+        >
+          Board
+        </button>
+        
+        <button
+          onClick={() => setShowCreateModal(true)}
+          style={{
+            background: '#36b37e',
+            border: 'none',
+            borderRadius: '6px',
+            color: 'white',
+            padding: '10px 20px',
+            fontSize: '14px',
+            fontWeight: '600',
+            cursor: 'pointer'
+          }}
+        >
+          Create Issue
+        </button>
+
+        <OnlineUsersIndicator users={users} />
+        
+        <NotificationPanel 
+          notifications={notifications}
+          onMarkAsRead={markNotificationAsRead}
+          onMarkAllAsRead={markAllNotificationsAsRead}
+        />
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '50%',
+            background: 'rgba(255,255,255,0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '14px',
+            fontWeight: '600'
+          }}>
+            {user?.avatar}
+          </div>
+          <div style={{ fontSize: '14px' }}>
+            <div>{user?.name}</div>
+            <div style={{ fontSize: '11px', opacity: 0.8 }}>
+              {user?.role.replace('_', ' ').toUpperCase()}
+            </div>
+          </div>
+          <button
+            onClick={logout}
+            style={{
+              background: 'rgba(255,255,255,0.2)',
+              border: 'none',
+              borderRadius: '6px',
+              color: 'white',
+              padding: '8px 12px',
+              fontSize: '12px',
+              cursor: 'pointer'
+            }}
+          >
+            Logout
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+
+  const renderDashboard = () => (
+    <div style={{ padding: '32px' }}>
+      <div style={{ marginBottom: '32px' }}>
+        <h1 style={{ fontSize: '28px', fontWeight: '700', marginBottom: '8px', color: '#172b4d' }}>
+          Project Dashboard
+        </h1>
+        <p style={{ color: '#6b778c', fontSize: '16px', margin: 0 }}>
+          Welcome back! Here's your project overview.
+        </p>
+      </div>
+      
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+        gap: '24px',
+        marginBottom: '32px'
+      }}>
+        {[
+          { label: 'Total Issues', value: metrics.totalIssues, color: '#0052cc', icon: '📊' },
+          { label: 'Completed', value: metrics.completedIssues, color: '#36b37e', icon: '✅' },
+          { label: 'In Progress', value: metrics.inProgressIssues, color: '#ffa500', icon: '🔄' },
+          { label: 'Story Points', value: `${metrics.completedPoints}/${metrics.totalPoints}`, color: '#6554c0', icon: '📈' }
+        ].map((metric, index) => (
+          <div key={index} style={{
+            background: 'white',
+            border: '1px solid #e1e5e9',
+            borderRadius: '12px',
+            padding: '24px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
+              <span style={{ fontSize: '24px', marginRight: '12px' }}>{metric.icon}</span>
+              <span style={{ fontSize: '14px', color: '#6b778c', fontWeight: '600' }}>{metric.label}</span>
+            </div>
+            <div style={{ fontSize: '36px', fontWeight: '700', color: metric.color }}>{metric.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{
+        background: 'white',
+        border: '1px solid #e1e5e9',
+        borderRadius: '12px',
+        padding: '24px',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+      }}>
+        <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '20px', color: '#172b4d' }}>
+          Recent Issues
+        </h3>
+        {issues.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {issues.slice(0, 5).map((issue) => (
+              <div 
+                key={issue.id} 
+                onClick={() => {
+                  setSelectedIssue(issue);
+                  setShowIssueModal(true);
+                }}
+                style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  padding: '12px',
+                  border: '1px solid #f0f0f0',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                <span style={{ marginRight: '12px', fontSize: '16px' }}>{getTypeIcon(issue.issue_type)}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '14px', fontWeight: '500', color: '#172b4d' }}>
+                    {issue.key}: {issue.title}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#6b778c' }}>
+                    Updated {new Date(issue.updated_at).toLocaleDateString()}
+                  </div>
+                </div>
+                <div style={{
+                  padding: '4px 8px',
+                  borderRadius: '12px',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  background: issue.status === 'DONE' ? '#e3fcef' : issue.status === 'IN_PROGRESS' ? '#deebff' : '#f4f5f7',
+                  color: getStatusColor(issue.status)
+                }}>
+                  {issue.status.replace('_', ' ')}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ textAlign: 'center', color: '#6b778c', padding: '40px' }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>📝</div>
+            <h4 style={{ margin: '0 0 8px 0' }}>No issues yet</h4>
+            <p style={{ margin: 0, fontSize: '14px' }}>Create your first issue to get started</p>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              style={{
+                marginTop: '16px',
+                background: '#0052cc',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '8px 16px',
+                fontSize: '14px',
+                cursor: 'pointer'
+              }}
+            >
+              Create Issue
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderBoard = () => (
+    <div style={{ padding: '32px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+        <div>
+          <h1 style={{ fontSize: '28px', fontWeight: '700', margin: 0, color: '#172b4d' }}>Sprint Board</h1>
+          <p style={{ color: '#6b778c', margin: '4px 0 0 0', fontSize: '16px' }}>
+            Drag and drop issues to update their status
+          </p>
+        </div>
+      </div>
+
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(4, 1fr)',
+        gap: '20px',
+        height: 'calc(100vh - 250px)',
+        minHeight: '600px'
+      }}>
+        {[
+          { status: 'TODO' as const, title: 'To Do', color: '#42526e' },
+          { status: 'IN_PROGRESS' as const, title: 'In Progress', color: '#0052cc' },
+          { status: 'REVIEW' as const, title: 'In Review', color: '#ffa500' },
+          { status: 'DONE' as const, title: 'Done', color: '#36b37e' }
+        ].map((column) => (
+          <div
+            key={column.status}
+            style={{
+              background: '#f8f9fa',
+              borderRadius: '12px',
+              padding: '16px',
+              border: '2px dashed transparent'
+            }}
+            onDragOver={handleDragOver}
+            onDrop={(e) => handleDrop(e, column.status)}
+          >
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '16px',
+              paddingBottom: '12px',
+              borderBottom: `2px solid ${column.color}`
+            }}>
+              <h3 style={{
+                fontSize: '14px',
+                fontWeight: '700',
+                color: column.color,
+                textTransform: 'uppercase',
+                margin: 0,
+                letterSpacing: '0.5px'
+              }}>
+                {column.title}
+              </h3>
+              <div style={{
+                background: column.color,
+                color: 'white',
+                borderRadius: '12px',
+                padding: '4px 8px',
+                fontSize: '12px',
+                fontWeight: '600',
+                minWidth: '20px',
+                textAlign: 'center'
+              }}>
+                {getIssuesByStatus(column.status).length}
+              </div>
+            </div>
+
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px',
+              height: 'calc(100% - 60px)',
+              overflowY: 'auto'
+            }}>
+              {getIssuesByStatus(column.status).length > 0 ? (
+                getIssuesByStatus(column.status).map((issue) => (
+                  <div
+                    key={issue.id}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, issue)}
+                    onClick={() => {
+                      setSelectedIssue(issue);
+                      setShowIssueModal(true);
+                    }}
+                    style={{
+                      background: 'white',
+                      border: '1px solid #e1e5e9',
+                      borderRadius: '8px',
+                      padding: '16px',
+                      cursor: 'grab',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <div style={{
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      color: '#172b4d',
+                      marginBottom: '8px',
+                      lineHeight: '1.4'
+                    }}>
+                      {issue.title}
+                    </div>
+
+                    <div style={{
+                      fontSize: '12px',
+                      color: '#6b778c',
+                      marginBottom: '12px',
+                      lineHeight: '1.3'
+                    }}>
+                      {issue.description.length > 60 ? issue.description.substring(0, 60) + '...' : issue.description}
+                    </div>
+
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '11px', color: '#6b778c', fontWeight: '600' }}>{issue.key}</span>
+                        <span style={{ fontSize: '14px' }}>{getTypeIcon(issue.issue_type)}</span>
+                        <div style={{
+                          width: '6px',
+                          height: '6px',
+                          borderRadius: '50%',
+                          background: getPriorityColor(issue.priority)
+                        }} />
+                        <span style={{
+                          fontSize: '10px',
+                          background: '#f4f5f7',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          fontWeight: '600',
+                          color: '#6b778c'
+                        }}>
+                          {issue.story_points}
+                        </span>
+                      </div>
+                      <div style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '50%',
+                        background: !issue.assignee_id ? '#ccc' : 'linear-gradient(135deg, #6554c0, #9575cd)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '11px',
+                        fontWeight: '600',
+                        color: 'white'
+                      }}>
+                        {issue.assignee_id ? getUserById(issue.assignee_id)?.avatar || 'UN' : 'UN'}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: '200px',
+                  color: '#6b778c',
+                  fontSize: '14px'
+                }}>
+                  <div style={{ fontSize: '32px', marginBottom: '8px', opacity: 0.5 }}>📋</div>
+                  <div>No issues in {column.title}</div>
+                  {column.status === 'TODO' && (
+                    <button
+                      onClick={() => setShowCreateModal(true)}
+                      style={{
+                        marginTop: '12px',
+                        background: 'transparent',
+                        border: '1px dashed #dfe1e6',
+                        borderRadius: '6px',
+                        padding: '8px 16px',
+                        fontSize: '12px',
+                        color: '#6b778c',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Create issue
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const renderCreateModal = () => (
+    showCreateModal && (
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 2000
+      }}>
+        <div style={{
+          background: 'white',
+          borderRadius: '12px',
+          padding: '24px',
+          width: '500px',
+          maxHeight: '80vh',
+          overflow: 'auto'
+        }}>
+          <h2 style={{ marginBottom: '20px', color: '#172b4d' }}>Create New Issue</h2>
+          
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#172b4d' }}>Title *</label>
+            <input
+              type="text"
+              value={newIssue.title}
+              onChange={(e) => setNewIssue({...newIssue, title: e.target.value})}
+              style={{
+                width: '100%',
+                padding: '12px',
+                border: '1px solid #dfe1e6',
+                borderRadius: '6px',
+                fontSize: '14px',
+                outline: 'none'
+              }}
+              placeholder="What needs to be done?"
+            />
+          </div>
+
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#172b4d' }}>Description</label>
+            <textarea
+              value={newIssue.description}
+              onChange={(e) => setNewIssue({...newIssue, description: e.target.value})}
+              rows={4}
+              style={{
+                width: '100%',
+                padding: '12px',
+                border: '1px solid #dfe1e6',
+                borderRadius: '6px',
+                fontSize: '14px',
+                resize: 'vertical',
+                outline: 'none'
+              }}
+              placeholder="Describe the issue in detail..."
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#172b4d' }}>Type</label>
+              <select
+                value={newIssue.issue_type}
+                onChange={(e) => setNewIssue({...newIssue, issue_type: e.target.value as Issue['issue_type']})}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #dfe1e6',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  outline: 'none'
+                }}
+              >
+                <option value="STORY">Story</option>
+                <option value="TASK">Task</option>
+                <option value="BUG">Bug</option>
+                <option value="EPIC">Epic</option>
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#172b4d' }}>Priority</label>
+              <select
+                value={newIssue.priority}
+                onChange={(e) => setNewIssue({...newIssue, priority: e.target.value as Issue['priority']})}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #dfe1e6',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  outline: 'none'
+                }}
+              >
+                <option value="LOWEST">Lowest</option>
+                <option value="LOW">Low</option>
+                <option value="MEDIUM">Medium</option>
+                <option value="HIGH">High</option>
+                <option value="HIGHEST">Highest</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#172b4d' }}>Assignee</label>
+              <select
+                value={newIssue.assignee_id || ''}
+                onChange={(e) => setNewIssue({...newIssue, assignee_id: e.target.value})}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #dfe1e6',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  outline: 'none'
+                }}
+              >
+                <option value="">Unassigned</option>
+                {users.filter(u => u.organization_id === user?.organization_id && u.is_active).map(u => (
+                  <option key={u.id} value={u.id}>{u.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#172b4d' }}>Story Points</label>
+              <input
+                type="number"
+                min="1"
+                max="21"
+                value={newIssue.story_points}
+                onChange={(e) => setNewIssue({...newIssue, story_points: parseInt(e.target.value) || 1})}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #dfe1e6',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  outline: 'none'
+                }}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: '24px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: '#172b4d' }}>Labels</label>
+            <input
+              type="text"
+              value={newIssue.labels.join(', ')}
+              onChange={(e) => setNewIssue({...newIssue, labels: e.target.value.split(',').map(l => l.trim()).filter(l => l)})}
+              style={{
+                width: '100%',
+                padding: '12px',
+                border: '1px solid #dfe1e6',
+                borderRadius: '6px',
+                fontSize: '14px',
+                outline: 'none'
+              }}
+              placeholder="Comma-separated labels (e.g., frontend, api, urgent)"
+            />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+            <button
+              onClick={() => setShowCreateModal(false)}
+              style={{
+                padding: '12px 24px',
+                border: '1px solid #dfe1e6',
+                borderRadius: '6px',
+                background: 'white',
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={createIssue}
+              disabled={!newIssue.title.trim()}
+              style={{
+                padding: '12px 24px',
+                border: 'none',
+                borderRadius: '6px',
+                background: newIssue.title.trim() ? '#0052cc' : '#ccc',
+                color: 'white',
+                cursor: newIssue.title.trim() ? 'pointer' : 'not-allowed',
+                fontSize: '14px',
+                fontWeight: '600'
+              }}
+            >
+              Create Issue
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  );
+
+  const renderIssueModal = () => (
+    showIssueModal && selectedIssue && (
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 2000
+      }}>
+        <div style={{
+          background: 'white',
+          borderRadius: '12px',
+          padding: '24px',
+          width: '600px',
+          maxHeight: '80vh',
+          overflow: 'auto'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+            <div>
+              <h2 style={{ margin: '0 0 8px 0', color: '#172b4d' }}>{selectedIssue.key}: {selectedIssue.title}</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                <span style={{ fontSize: '16px' }}>{getTypeIcon(selectedIssue.issue_type)}</span>
+                <span style={{ fontSize: '12px', color: '#6b778c' }}>{selectedIssue.issue_type}</span>
+                <div style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: getPriorityColor(selectedIssue.priority)
+                }} />
+                <span style={{ fontSize: '12px', color: '#6b778c' }}>{selectedIssue.priority}</span>
+                <div style={{
+                  padding: '4px 8px',
+                  borderRadius: '12px',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  background: selectedIssue.status === 'DONE' ? '#e3fcef' : selectedIssue.status === 'IN_PROGRESS' ? '#deebff' : '#f4f5f7',
+                  color: getStatusColor(selectedIssue.status)
+                }}>
+                  {selectedIssue.status.replace('_', ' ')}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowIssueModal(false)}
+              style={{
+                background: 'none',
+                border: 'none',
+                fontSize: '20px',
+                cursor: 'pointer',
+                color: '#6b778c'
+              }}
+            >
+              ×
+            </button>
+          </div>
+
+          <div style={{ marginBottom: '20px' }}>
+            <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#172b4d' }}>Description</h4>
+            <p style={{ margin: 0, color: '#6b778c', lineHeight: '1.5' }}>
+              {selectedIssue.description || 'No description provided.'}
+            </p>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+            <div>
+              <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#172b4d' }}>Assignee</h4>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{
+                  width: '24px',
+                  height: '24px',
+                  borderRadius: '50%',
+                  background: selectedIssue.assignee_id ? 'linear-gradient(135deg, #6554c0, #9575cd)' : '#ccc',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '10px',
+                  fontWeight: '600',
+                  color: 'white'
+                }}>
+                  {selectedIssue.assignee_id ? getUserById(selectedIssue.assignee_id)?.avatar || 'UN' : 'UN'}
+                </div>
+                <span style={{ fontSize: '14px', color: '#172b4d' }}>
+                  {selectedIssue.assignee_id ? getUserById(selectedIssue.assignee_id)?.name || 'Unknown User' : 'Unassigned'}
+                </span>
+              </div>
+            </div>
+            <div>
+              <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#172b4d' }}>Story Points</h4>
+              <span style={{ fontSize: '14px', color: '#172b4d' }}>{selectedIssue.story_points}</span>
+            </div>
+          </div>
+
+          {selectedIssue.labels && selectedIssue.labels.length > 0 && (
+            <div style={{ marginBottom: '20px' }}>
+              <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#172b4d' }}>Labels</h4>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {selectedIssue.labels.map((label, index) => (
+                  <span
+                    key={index}
+                    style={{
+                      background: '#f4f5f7',
+                      color: '#6b778c',
+                      padding: '4px 8px',
+                      borderRadius: '12px',
+                      fontSize: '11px',
+                      fontWeight: '600'
+                    }}
+                  >
+                    {label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <CommentSection
+            comments={selectedIssue.comments || []}
+            users={users}
+            onAddComment={(content) => addComment(selectedIssue.id, content)}
+            currentUserId={user?.id || ''}
+          />
+        </div>
+      </div>
+    )
+  );
+
+  // Main render logic
+  if (!isAuthenticated) {
+    return (
+      <>
+        {renderAuth()}
+        <ToastContainer toasts={toasts} onRemove={removeToast} />
+      </>
+    );
+  }
+
+  return (
+    <div style={{ background: '#fafbfc', minHeight: '100vh' }}>
+      {renderHeader()}
+      <main>
+        {currentView === 'dashboard' && renderDashboard()}
+        {currentView === 'board' && renderBoard()}
+      </main>
+      {renderCreateModal()}
+      {renderIssueModal()}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
+    </div>
+  );
+};
+
+export default App;
+

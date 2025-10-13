@@ -1,0 +1,22 @@
+/* src/components/Chat.css */
+
+/* Simple CSS for integrated chat component */
+/* Most styles are inline in the component for better isolation */
+
+/* Optional: Add any additional styles here if needed */
+.chat-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #565856;
+  border-radius: 3px;
+}
+
+.chat-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #8a8b8d;
+}
