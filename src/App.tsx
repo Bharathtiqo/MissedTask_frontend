@@ -77,6 +77,7 @@ interface ToastMessage {
 
 // API Base URL - fallback to localhost for development
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'https://missedtask-backend-2.onrender.com';
+const WS_BASE_URL = process.env.REACT_APP_WS_BASE_URL;
 
 // Toast notification component
 const Toast: React.FC<{ toast: ToastMessage; onRemove: (id: string) => void }> = ({ toast, onRemove }) => {
@@ -785,6 +786,23 @@ const App: React.FC = () => {
 
     try {
       const response = await fetch(url, { ...options, headers });
+      const contentType = response.headers.get('content-type') || '';
+      const isJsonResponse = contentType.includes('application/json');
+      const statusHasBody = ![204, 205].includes(response.status);
+      const responseBodyText = statusHasBody ? await response.text() : '';
+      let parsedBody: any = null;
+
+      if (responseBodyText && isJsonResponse) {
+        try {
+          parsedBody = JSON.parse(responseBodyText);
+        } catch (parseError) {
+          console.error('Received malformed JSON from API:', parseError);
+          console.debug('Malformed payload preview:', responseBodyText.slice(0, 200));
+          throw new Error('Received malformed JSON response from server.');
+        }
+      } else if (responseBodyText) {
+        parsedBody = responseBodyText;
+      }
       if (!response.ok) {
         // Handle 401 Unauthorized - clear session and redirect to login
         if (response.status === 401) {
@@ -801,28 +819,30 @@ const App: React.FC = () => {
           throw new Error('Session expired. Please login again.');
         }
 
-        let errorData: any = null;
-        try {
-          errorData = await response.json();
-          console.error('API Error Response:', errorData);
-        } catch {}
+        console.error('API Error Response:', parsedBody ?? responseBodyText);
 
         // Handle different error formats
         let errorMessage = `HTTP ${response.status}`;
-        if (errorData) {
-          if (typeof errorData.detail === 'string') {
-            errorMessage = errorData.detail;
-          } else if (typeof errorData.detail === 'object') {
+        if (parsedBody && typeof parsedBody === 'object') {
+          if (typeof parsedBody.detail === 'string') {
+            errorMessage = parsedBody.detail;
+          } else if (typeof parsedBody.detail === 'object') {
             // FastAPI validation errors
-            errorMessage = JSON.stringify(errorData.detail);
-          } else if (errorData.message) {
-            errorMessage = errorData.message;
+            errorMessage = JSON.stringify(parsedBody.detail);
+          } else if (parsedBody.message) {
+            errorMessage = parsedBody.message;
           }
+        } else if (responseBodyText.trim()) {
+          const trimmed = responseBodyText.trim();
+          errorMessage = trimmed.length > 200 ? `${trimmed.slice(0, 200)}...` : trimmed;
         }
 
         throw new Error(errorMessage);
       }
-      return await response.json();
+      if (!responseBodyText) {
+        return null;
+      }
+      return isJsonResponse ? parsedBody : responseBodyText;
     } catch (error) {
       throw error instanceof Error ? error : new Error(String(error));
     }
@@ -852,12 +872,22 @@ const App: React.FC = () => {
       });
       console.log('✅ Users loaded:', usersData.length);
 
-      // Add is_online property (defaulting to true for now)
-      // TODO: Implement real online/offline tracking via WebSocket
-      const usersWithStatus = usersData.map((u: any) => ({
-        ...u,
-        is_online: true // Set everyone as online for now
-      }));
+      // Preserve online status from backend when available and default to offline otherwise
+      const usersWithStatus = usersData.map((u: any) => {
+        const derivedOnline =
+          typeof u.is_online === 'boolean'
+            ? u.is_online
+            : typeof u.online === 'boolean'
+              ? u.online
+              : typeof u.status?.is_online === 'boolean'
+                ? u.status.is_online
+                : undefined;
+
+        return {
+          ...u,
+          is_online: derivedOnline ?? false
+        };
+      });
 
       console.log('✅ Users with online status:', usersWithStatus);
       setUsers(usersWithStatus);
@@ -871,9 +901,29 @@ const App: React.FC = () => {
   const connectWebSocket = () => {
     if (!accessToken) return;
 
-    const wsUrl = `ws://localhost:4000/ws/${accessToken}`;
-    console.log('🔌 Connecting to WebSocket:', wsUrl);
+    let wsUrl: string | null = null;
 
+    if (WS_BASE_URL) {
+      wsUrl = `${WS_BASE_URL.replace(/\/$/, '')}/ws/${accessToken}`;
+    } else {
+      try {
+        const apiUrl = new URL(API_BASE_URL);
+        const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+        const sanitizedPath = apiUrl.pathname.replace(/\/+$/, '');
+        const pathPrefix = sanitizedPath && sanitizedPath !== '/' ? sanitizedPath : '';
+        wsUrl = `${wsProtocol}//${apiUrl.host}${pathPrefix}/ws/${accessToken}`;
+      } catch (error) {
+        console.warn('⚠️ Failed to derive WebSocket URL from API_BASE_URL, falling back to localhost.', error);
+        wsUrl = `ws://localhost:4000/ws/${accessToken}`;
+      }
+    }
+
+    if (!wsUrl) {
+      console.error('❌ Unable to determine WebSocket URL.');
+      return;
+    }
+
+    console.log('🔌 Connecting to WebSocket:', wsUrl);
     if (wsRef.current) {
       wsRef.current.close();
     }
@@ -5382,3 +5432,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+

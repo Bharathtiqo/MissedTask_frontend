@@ -56,15 +56,8 @@ interface IssueActivityChartProps {
 }
 
 export const IssueActivityChart: React.FC<IssueActivityChartProps> = ({ data }) => {
-  const defaultData = data || [
-    { day: 'Mon', issues: 12, completed: 8 },
-    { day: 'Tue', issues: 19, completed: 14 },
-    { day: 'Wed', issues: 15, completed: 10 },
-    { day: 'Thu', issues: 25, completed: 18 },
-    { day: 'Fri', issues: 22, completed: 16 },
-    { day: 'Sat', issues: 18, completed: 15 },
-    { day: 'Sun', issues: 14, completed: 12 }
-  ];
+  // If no data provided, show empty state message
+  const defaultData = data || [];
 
   return (
     <motion.div
@@ -81,6 +74,18 @@ export const IssueActivityChart: React.FC<IssueActivityChartProps> = ({ data }) 
       <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '20px', color: '#fff' }}>
         Issue Activity (Last 7 Days)
       </h3>
+      {defaultData.length === 0 ? (
+        <div style={{
+          height: '300px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#94a3b8',
+          fontSize: '14px'
+        }}>
+          No activity data available yet
+        </div>
+      ) : (
       <ResponsiveContainer width="100%" height={300}>
         <LineChart data={defaultData}>
           <defs>
@@ -123,6 +128,7 @@ export const IssueActivityChart: React.FC<IssueActivityChartProps> = ({ data }) 
           />
         </LineChart>
       </ResponsiveContainer>
+      )}
     </motion.div>
   );
 };

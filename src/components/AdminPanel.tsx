@@ -709,6 +709,84 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       { priority: 'LOWEST', count: issuesByPriority['LOWEST'] || 0 }
     ];
 
+    // Calculate last 7 days activity
+    const last7Days = [];
+    const today = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - i);
+      const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+      const dateStr = date.toISOString().split('T')[0];
+
+      const dayIssues = issues.filter(issue => {
+        const issueDate = new Date(issue.created_at).toISOString().split('T')[0];
+        return issueDate === dateStr;
+      });
+
+      const completedIssues = issues.filter(issue => {
+        const issueDate = new Date(issue.updated_at || issue.created_at).toISOString().split('T')[0];
+        return issueDate === dateStr && issue.status === 'DONE';
+      });
+
+      last7Days.push({
+        day: dayName,
+        issues: dayIssues.length,
+        completed: completedIssues.length
+      });
+    }
+
+    // Calculate team performance by weeks (last 4 weeks)
+    const weeklyData = [];
+    for (let i = 3; i >= 0; i--) {
+      const weekEnd = new Date(today);
+      weekEnd.setDate(weekEnd.getDate() - (i * 7));
+      const weekStart = new Date(weekEnd);
+      weekStart.setDate(weekStart.getDate() - 7);
+
+      const weekIssues = issues.filter(issue => {
+        const issueDate = new Date(issue.created_at);
+        return issueDate >= weekStart && issueDate <= weekEnd;
+      });
+
+      const assignedCount = weekIssues.length;
+      const completedCount = weekIssues.filter(i => i.status === 'DONE').length;
+      const velocity = Math.round((completedCount / (assignedCount || 1)) * 100);
+
+      weeklyData.push({
+        week: `Week ${4 - i}`,
+        completed: completedCount,
+        assigned: assignedCount,
+        velocity: velocity
+      });
+    }
+
+    // Calculate user activity metrics (average across all users)
+    const totalIssues = issues.length || 1;
+    const completedIssues = issues.filter(i => i.status === 'DONE').length;
+    const userActivityData = [
+      { metric: 'Issues Created', value: Math.min(100, Math.round((totalIssues / 50) * 100)), fullMark: 100 },
+      { metric: 'Completion Rate', value: Math.round((completedIssues / totalIssues) * 100), fullMark: 100 },
+      { metric: 'In Progress', value: Math.round((issuesByStatus['IN_PROGRESS'] || 0) / totalIssues * 100), fullMark: 100 },
+      { metric: 'Review', value: Math.round((issuesByStatus['REVIEW'] || 0) / totalIssues * 100), fullMark: 100 },
+      { metric: 'Collaboration', value: users.length > 1 ? 75 : 30, fullMark: 100 }
+    ];
+
+    // Calculate burndown chart (simulated sprint of 10 days)
+    const sprintLength = 10;
+    const totalPoints = issues.length;
+    const burndownData = [];
+    for (let day = 0; day <= sprintLength; day++) {
+      const ideal = totalPoints - (totalPoints / sprintLength) * day;
+      const completed = completedIssues;
+      const remaining = Math.max(0, totalPoints - (completed / sprintLength) * day);
+
+      burndownData.push({
+        day: `Day ${day + 1}`,
+        ideal: Math.round(ideal),
+        actual: Math.round(remaining)
+      });
+    }
+
     return (
       <div>
         <h2 style={{ fontSize: '24px', fontWeight: '600', marginBottom: '24px', color: '#fff' }}>
@@ -729,7 +807,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           gap: '24px',
           marginBottom: '24px'
         }}>
-          <IssueActivityChart />
+          <IssueActivityChart data={last7Days} />
           <IssueDistributionChart data={statusDistributionData} />
         </div>
 
@@ -741,7 +819,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           marginBottom: '24px'
         }}>
           <PriorityChart data={priorityData} />
-          <TeamPerformanceChart />
+          <TeamPerformanceChart data={weeklyData} />
         </div>
 
         {/* Third Row - User Activity and Burndown */}
@@ -751,8 +829,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           gap: '24px',
           marginBottom: '24px'
         }}>
-          <UserActivityChart />
-          <BurndownChart />
+          <UserActivityChart data={userActivityData} />
+          <BurndownChart data={burndownData} />
         </div>
 
         {/* Team Performance Summary */}
