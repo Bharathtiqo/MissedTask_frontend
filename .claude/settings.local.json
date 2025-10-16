@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(timeout 30 npm run build)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(timeout 3 sleep 2)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(timeout 5 sleep 3)",
+      "Bash(curl:*)",
+      "Bash(taskkill:*)",
+      "Bash(tasklist)",
+      "Bash(npm start)",
+      "Bash(timeout 10 sleep 8)",
+      "Bash(timeout 15 sleep 12)",
+      "Bash(powershell:*)",
+      "Bash(git restore:*)",
+      "Bash(git checkout:*)",
+      "Bash(git fsck:*)",
+      "Bash(dir:*)",
+      "Bash(copy \"apps\\web\\src\\App.tsx\" \"apps\\web\\src\\App.tsx.corrupted.backup\")",
+      "Bash(PORT=3001 npm start)",
+      "Bash(timeout 8 sleep 5)",
+      "Bash(cat:*)",
+      "Bash(awk:*)",
+      "Bash(node -e \"const fs=require(''fs''); const content=fs.readFileSync(''App.tsx.bak'',''utf8'').replace(/^\\uFEFF/,''''); fs.writeFileSync(''App.tsx.fixed'', content, ''utf8'');\")",
+      "Bash(npm run dev:*)",
+      "Bash(npm install:*)",
+      "Bash(if exist \"node_modules\\.cache\" rmdir /s /q \"node_modules\\.cache\")",
+      "Bash(if exist \"build\" rmdir /s /q \"build\")",
+      "Bash(touch:*)",
+      "Bash(rm:*)",
+      "Bash(find:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
