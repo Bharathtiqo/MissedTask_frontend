@@ -1,5 +1,5 @@
 // src/components/AdminPanel.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Icons from './icons';
 import {
   IssueActivityChart,
@@ -82,17 +82,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     inProgressIssues: 0,
     storageUsed: 0
   });
-  const [analyticsFilters, setAnalyticsFilters] = useState<AnalyticsFilters>({
-    dateRange: '7days'
-  });
-
   const isSuperAdmin = currentUser.role === 'super_admin';
 
-  useEffect(() => {
-    calculateStats();
-  }, [users, issues]);
-
-  const calculateStats = () => {
+  const calculateStats = useCallback(() => {
     setStats({
       totalUsers: users.length,
       activeUsers: users.filter(u => u.is_active).length,
@@ -101,7 +93,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
       inProgressIssues: issues.filter(i => i.status === 'IN_PROGRESS').length,
       storageUsed: Math.round((users.length * 0.5 + issues.length * 0.1) * 100) / 100
     });
-  };
+  }, [issues, users]);
+
+  useEffect(() => {
+    calculateStats();
+  }, [calculateStats]);
 
   const handleRoleUpdate = async () => {
     if (!selectedUser || !isSuperAdmin) {
@@ -110,7 +106,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     }
 
     try {
-      const response = await apiCall(`/api/users/${selectedUser.id}/role`, {
+      await apiCall(`/api/users/${selectedUser.id}/role`, {
         method: 'PUT',
         body: JSON.stringify({
           role: editForm.role,
@@ -162,7 +158,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     }
 
     try {
-      const response = await apiCall('/api/users/invite', {
+      await apiCall('/api/users/invite', {
         method: 'POST',
         body: JSON.stringify({
           email: inviteForm.email,
@@ -235,7 +231,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const handleFilterChange = (filters: AnalyticsFilters) => {
-    setAnalyticsFilters(filters);
     showToast('info', 'Filters Applied', `Showing data for ${filters.dateRange}`);
   };
 

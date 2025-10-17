@@ -475,12 +475,3 @@ export const BurndownChart: React.FC<BurndownChartProps> = ({ data }) => {
     </motion.div>
   );
 };
-
-export default {
-  IssueActivityChart,
-  IssueDistributionChart,
-  PriorityChart,
-  TeamPerformanceChart,
-  UserActivityChart,
-  BurndownChart
-};
