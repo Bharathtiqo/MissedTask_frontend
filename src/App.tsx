@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Icons from './components/icons';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
@@ -43,6 +43,7 @@ interface Issue {
   created_at: string;
   updated_at: string;
   labels: string[];
+  visibility?: string;
   organization_id: string;
   deadline?: string | null;
   comments?: Comment[];
@@ -59,7 +60,7 @@ interface Comment {
 
 interface Notification {
   id: string;
-  type: 'issue_created' | 'issue_updated' | 'issue_assigned' | 'comment_added' | 'status_changed' | 'user_joined' | 'new_message';
+  type: 'issue_created' | 'issue_updated' | 'issue_deleted' | 'issue_assigned' | 'comment_added' | 'status_changed' | 'user_joined' | 'new_message';
   title: string;
   message: string;
   read: boolean;
@@ -75,9 +76,25 @@ interface ToastMessage {
   duration?: number;
 }
 
+type IssueEditDraft = {
+  title: string;
+  description: string;
+  status: Issue['status'];
+  priority: Issue['priority'];
+  issue_type: Issue['issue_type'];
+  assignee_id: string;
+  story_points: string;
+  labels: string;
+  deadline: string;
+};
+
 // API Base URL - fallback to localhost for development
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'https://missedtask-backend-2.onrender.com';
 const WS_BASE_URL = process.env.REACT_APP_WS_BASE_URL;
+const devProxyDisabled = process.env.REACT_APP_DISABLE_DEV_PROXY === 'true';
+const isBrowser = typeof window !== 'undefined';
+const isLocalhostEnv = () => isBrowser && window.location.hostname === 'localhost';
+let devProxyActivated = false;
 
 // Toast notification component
 const Toast: React.FC<{ toast: ToastMessage; onRemove: (id: string) => void }> = ({ toast, onRemove }) => {
@@ -161,134 +178,6 @@ const ToastContainer: React.FC<{ toasts: ToastMessage[]; onRemove: (id: string) 
 );
 
 // Notification panel component
-const NotificationPanel: React.FC<{
-  notifications: Notification[];
-  onMarkAsRead: (id: string) => void;
-  onMarkAllAsRead: () => void;
-}> = ({ notifications, onMarkAsRead, onMarkAllAsRead }) => {
-  const [showNotifications, setShowNotifications] = useState(false);
-  const unreadCount = notifications.filter(n => !n.read).length;
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <button
-        onClick={() => setShowNotifications(!showNotifications)}
-        style={{
-          position: 'relative',
-          background: 'rgba(255,255,255,0.2)',
-          border: 'none',
-          borderRadius: '6px',
-          color: 'white',
-          padding: '8px 12px',
-          fontSize: '14px',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px'
-        }}
-      >
-        ?? Notifications
-        {unreadCount > 0 && (
-          <span style={{
-            position: 'absolute',
-            top: '-4px',
-            right: '-4px',
-            background: '#ff5722',
-            color: 'white',
-            borderRadius: '50%',
-            width: '20px',
-            height: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '11px',
-            fontWeight: '600'
-          }}>
-            {unreadCount}
-          </span>
-        )}
-      </button>
-      
-      {showNotifications && (
-        <div style={{
-          position: 'absolute',
-          top: '100%',
-          right: 0,
-          background: 'white',
-          border: '1px solid #e1e5e9',
-          borderRadius: '8px',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-          padding: '12px',
-          width: '320px',
-          maxHeight: '400px',
-          overflowY: 'auto',
-          zIndex: 1000,
-          marginTop: '8px'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <h4 style={{ margin: 0, fontSize: '14px', color: '#172b4d' }}>
-              Recent Activity
-            </h4>
-            {unreadCount > 0 && (
-              <button
-                onClick={onMarkAllAsRead}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#0052cc',
-                  fontSize: '12px',
-                  cursor: 'pointer',
-                  textDecoration: 'underline'
-                }}
-              >
-                Mark all as read
-              </button>
-            )}
-          </div>
-          {notifications.length > 0 ? (
-            notifications.slice().reverse().map(notification => (
-              <div
-                key={notification.id}
-                style={{
-                  padding: '8px',
-                  borderRadius: '6px',
-                  marginBottom: '8px',
-                  background: notification.read ? 'transparent' : '#f0f8ff',
-                  border: notification.read ? '1px solid #f0f0f0' : '1px solid #e3f2fd',
-                  cursor: 'pointer'
-                }}
-                onClick={() => onMarkAsRead(notification.id)}
-              >
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: '8px'
-                }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: notification.read ? 'normal' : 'bold', marginBottom: '4px' }}>
-                      {notification.title}
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#6b778c' }}>
-                      {notification.message}
-                    </div>
-                    <div style={{ fontSize: '11px', color: '#97a0af', marginTop: '4px' }}>
-                      {new Date(notification.timestamp).toLocaleString()}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div style={{ color: '#6b778c', fontSize: '13px', textAlign: 'center', padding: '20px' }}>
-              No recent activity
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
-
 // Online Users Indicator Component
 const OnlineUsersIndicator: React.FC<{ users: User[] }> = ({ users }) => {
   const onlineUsers = users.filter(u => u.is_online);
@@ -570,10 +459,12 @@ const App: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showIssueModal, setShowIssueModal] = useState(false);
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
+  const [isEditingIssue, setIsEditingIssue] = useState(false);
+  const [issueEditDraft, setIssueEditDraft] = useState<IssueEditDraft | null>(null);
+  const [isSavingIssue, setIsSavingIssue] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showChatPopup, setShowChatPopup] = useState(false);
-  const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showNotificationsPanel, setShowNotificationsPanel] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -594,6 +485,7 @@ const App: React.FC = () => {
     description: '',
     issue_type: 'STORY' as Issue['issue_type'],
     priority: 'MEDIUM' as Issue['priority'],
+    status: 'TODO' as Issue['status'],
     assignee_id: '',
     story_points: 1,
     labels: [] as string[],
@@ -602,7 +494,7 @@ const App: React.FC = () => {
   const [chatMessage, setChatMessage] = useState('');
   const [selectedChatUser, setSelectedChatUser] = useState<string | null>(null); // null = team chat, user_id = direct message
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
-  const [conversations, setConversations] = useState<Record<string, any>>({});
+  const [, setConversations] = useState<Record<string, any>>({});
   const [chatMessages, setChatMessages] = useState<Array<{
     id: string;
     user: string;
@@ -633,11 +525,9 @@ const App: React.FC = () => {
   // Refs
   const wsRef = useRef<WebSocket | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const userRef = useRef<User | null>(null);
-  const usersRef = useRef<User[]>([]);
 
   // Helper functions
-  const showToast = (type: ToastMessage['type'], title: string, message: string) => {
+  const showToast = useCallback((type: ToastMessage['type'], title: string, message: string) => {
     const toast: ToastMessage = {
       id: Date.now().toString(),
       type,
@@ -645,20 +535,136 @@ const App: React.FC = () => {
       message
     };
     setToasts(prev => [...prev, toast]);
-  };
+  }, []);
 
   const removeToast = (id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  const addNotification = (notification: Omit<Notification, 'id' | 'timestamp'>) => {
+  const normalizeDeadline = (value: string | null | undefined): string | null => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+    return parsed.toISOString();
+  };
+
+  const formatDateForInput = useCallback((value: string | null | undefined) => {
+    if (!value) return '';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return '';
+    }
+    return parsed.toISOString().split('T')[0];
+  }, []);
+
+  const sanitizeLabels = useCallback(
+    (labels: string[] | undefined) =>
+      labels?.map(label => label.trim()).filter(Boolean) ?? [],
+    []
+  );
+
+  const arraysEqual = <T,>(a: T[], b: T[]) =>
+    a.length === b.length && a.every((value, index) => value === b[index]);
+
+  const hydrateIssueEditDraft = useCallback((issue: Issue | null) => {
+    if (issue) {
+      setIssueEditDraft({
+        title: issue.title,
+        description: issue.description || '',
+        status: issue.status,
+        priority: issue.priority,
+        issue_type: issue.issue_type,
+        assignee_id: issue.assignee_id || '',
+        story_points: issue.story_points != null ? String(issue.story_points) : '',
+        labels: sanitizeLabels(issue.labels || []).join(', '),
+        deadline: formatDateForInput(issue.deadline)
+      });
+    } else {
+      setIssueEditDraft(null);
+    }
+  }, [formatDateForInput, sanitizeLabels]);
+
+  const buildIssueUpdatePayload = (updates: Partial<Issue> & { visibility?: string }) => {
+    const payload: Record<string, any> = {};
+    const allowedKeys: Array<keyof Issue | 'visibility'> = [
+      'title',
+      'description',
+      'status',
+      'priority',
+      'story_points',
+      'assignee_id',
+      'labels',
+      'deadline',
+      'issue_type',
+      'visibility'
+    ];
+
+    allowedKeys.forEach((key) => {
+      const value = (updates as any)[key];
+      if (value === undefined) {
+        return;
+      }
+
+      switch (key) {
+        case 'title':
+        case 'description':
+          payload[key] = typeof value === 'string' ? value.trim() : value;
+          break;
+        case 'status':
+        case 'priority':
+        case 'issue_type':
+          payload[key] = typeof value === 'string' ? value.toUpperCase() : value;
+          break;
+        case 'story_points': {
+          if (value === null || value === '') {
+            payload[key] = null;
+          } else if (typeof value === 'string') {
+            const numeric = Number(value);
+            payload[key] = Number.isFinite(numeric) ? numeric : null;
+          } else if (typeof value === 'number') {
+            payload[key] = value;
+          } else {
+            payload[key] = null;
+          }
+          break;
+        }
+        case 'assignee_id':
+          payload[key] = value === '' ? null : value;
+          break;
+        case 'labels':
+          if (Array.isArray(value)) {
+            payload[key] = sanitizeLabels(value);
+          } else if (typeof value === 'string') {
+            payload[key] = sanitizeLabels(value.split(','));
+          } else {
+            payload[key] = [];
+          }
+          break;
+        case 'deadline':
+          if (value === null) {
+            payload[key] = null;
+          } else {
+            payload[key] = normalizeDeadline(value) ?? null;
+          }
+          break;
+        default:
+          payload[key] = value;
+      }
+    });
+
+    return payload;
+  };
+
+  const addNotification = useCallback((notification: Omit<Notification, 'id' | 'timestamp'>) => {
     const newNotification: Notification = {
       ...notification,
       id: Date.now().toString(),
       timestamp: new Date().toISOString()
     };
     setNotifications(prev => [newNotification, ...prev]);
-  };
+  }, []);
 
   const markNotificationAsRead = (id: string) => {
     const notification = notifications.find(n => n.id === id);
@@ -695,7 +701,7 @@ const App: React.FC = () => {
       const savedUser = localStorage.getItem('user');
       const savedOrg = localStorage.getItem('organization');
 
-      console.log('💾 Checking saved session...');
+      console.log('ð¾ Checking saved session...');
       console.log('Token exists:', !!savedToken);
       console.log('User exists:', !!savedUser);
       console.log('Org exists:', !!savedOrg);
@@ -705,16 +711,16 @@ const App: React.FC = () => {
           const parsedUser = JSON.parse(savedUser);
           const parsedOrg = JSON.parse(savedOrg);
 
-          console.log('✅ Restoring session for user:', parsedUser.email);
+          console.log('â Restoring session for user:', parsedUser.email);
 
           // Validate token by making a test API call
-          console.log('🔍 Validating token...');
-          const response = await fetch(`${API_BASE_URL}/api/users`, {
-            headers: { 'Authorization': `Bearer ${savedToken}` }
-          });
-
-          if (response.status === 401) {
-            console.warn('❌ Token validation failed - clearing session');
+          console.log('ð Validating token...');
+          try {
+            await apiCall('/api/users', {
+              headers: { 'Authorization': `Bearer ${savedToken}` }
+            });
+          } catch (validationError) {
+            console.warn('â Token validation failed - clearing session', validationError);
             localStorage.removeItem('accessToken');
             localStorage.removeItem('user');
             localStorage.removeItem('organization');
@@ -722,11 +728,7 @@ const App: React.FC = () => {
             return;
           }
 
-          if (!response.ok) {
-            throw new Error('Token validation failed');
-          }
-
-          console.log('✅ Token validated successfully');
+          console.log('â Token validated successfully');
 
           setAccessToken(savedToken);
           setUser(parsedUser);
@@ -739,7 +741,7 @@ const App: React.FC = () => {
           loadUsers(savedToken);
           connectWebSocket();
         } catch (error) {
-          console.error('❌ Error validating saved session:', error);
+          console.error('â Error validating saved session:', error);
           localStorage.removeItem('accessToken');
           localStorage.removeItem('user');
           localStorage.removeItem('organization');
@@ -775,17 +777,75 @@ const App: React.FC = () => {
     }
   }, [currentView]);
 
+  useEffect(() => {
+    hydrateIssueEditDraft(selectedIssue);
+    setIsEditingIssue(false);
+    setIsSavingIssue(false);
+  }, [selectedIssue, hydrateIssueEditDraft]);
+
+  useEffect(() => {
+    if (!showIssueModal) {
+      setIsEditingIssue(false);
+      setIsSavingIssue(false);
+    }
+  }, [showIssueModal]);
+
+  const buildApiUrl = (base: string, endpoint: string) => {
+    const trimmedBase = base.replace(/\/$/, '');
+    const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    if (!trimmedBase) {
+      return normalizedEndpoint;
+    }
+    return `${trimmedBase}${normalizedEndpoint}`;
+  };
+
+  const interpretOnlineFlag = (value: any): boolean | undefined => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') {
+      if (value === 1) return true;
+      if (value === 0) return false;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['1', 'true', 'yes', 'online', 'active'].includes(normalized)) return true;
+      if (['0', 'false', 'no', 'offline', 'inactive'].includes(normalized)) return false;
+    }
+    return undefined;
+  };
+
   // API call helper
-  const apiCall = async (endpoint: string, options: RequestInit = {}) => {
-    const url = `${API_BASE_URL}${endpoint}`;
+  const apiCall = useCallback(async (endpoint: string, options: RequestInit = {}) => {
+    const optionHeaders = options.headers instanceof Headers
+      ? Object.fromEntries(options.headers.entries())
+      : (options.headers as Record<string, string> | undefined) ?? {};
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...(options.headers as Record<string, string>),
+      ...optionHeaders,
     };
     if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
 
-    try {
-      const response = await fetch(url, { ...options, headers });
+    const { headers: _ignored, ...restOptions } = options;
+    const initialBase = devProxyActivated || !API_BASE_URL ? '' : API_BASE_URL;
+    const allowProxyFallback = !devProxyActivated && !devProxyDisabled && !!API_BASE_URL && isLocalhostEnv();
+
+    const attemptFetch = async (base: string, enableProxyFallback: boolean): Promise<any> => {
+      const requestUrl = buildApiUrl(base, endpoint);
+      let response: Response;
+      try {
+        response = await fetch(requestUrl, { ...restOptions, headers });
+      } catch (networkError) {
+        if (enableProxyFallback) {
+          console.warn('Network error while calling API, retrying via dev proxy fallback.', { endpoint, requestUrl, networkError });
+          devProxyActivated = true;
+          return attemptFetch('', false);
+        }
+        const message = networkError instanceof Error ? networkError.message : String(networkError);
+        const wrappedError = new Error(`Network request failed: ${message}. Check server availability and CORS configuration.`);
+        (wrappedError as any).cause = networkError;
+        throw wrappedError;
+      }
+
       const contentType = response.headers.get('content-type') || '';
       const isJsonResponse = contentType.includes('application/json');
       const statusHasBody = ![204, 205].includes(response.status);
@@ -798,13 +858,15 @@ const App: React.FC = () => {
         } catch (parseError) {
           console.error('Received malformed JSON from API:', parseError);
           console.debug('Malformed payload preview:', responseBodyText.slice(0, 200));
-          throw new Error('Received malformed JSON response from server.');
+          if (response.ok) {
+            throw new Error('Received malformed JSON response from server.');
+          }
         }
       } else if (responseBodyText) {
         parsedBody = responseBodyText;
       }
+
       if (!response.ok) {
-        // Handle 401 Unauthorized - clear session and redirect to login
         if (response.status === 401) {
           console.warn('⚠️ 401 Unauthorized - Token expired or invalid');
           localStorage.removeItem('accessToken');
@@ -821,13 +883,11 @@ const App: React.FC = () => {
 
         console.error('API Error Response:', parsedBody ?? responseBodyText);
 
-        // Handle different error formats
         let errorMessage = `HTTP ${response.status}`;
         if (parsedBody && typeof parsedBody === 'object') {
           if (typeof parsedBody.detail === 'string') {
             errorMessage = parsedBody.detail;
           } else if (typeof parsedBody.detail === 'object') {
-            // FastAPI validation errors
             errorMessage = JSON.stringify(parsedBody.detail);
           } else if (parsedBody.message) {
             errorMessage = parsedBody.message;
@@ -839,15 +899,20 @@ const App: React.FC = () => {
 
         throw new Error(errorMessage);
       }
+
       if (!responseBodyText) {
         return null;
       }
-      return isJsonResponse ? parsedBody : responseBodyText;
-    } catch (error) {
-      throw error instanceof Error ? error : new Error(String(error));
-    }
-  };
 
+      if (isJsonResponse) {
+        return parsedBody ?? null;
+      }
+
+      return responseBodyText;
+    };
+
+    return attemptFetch(initialBase, allowProxyFallback);
+  }, [accessToken, showToast, setAccessToken, setUser, setOrganization, setIsAuthenticated, setCurrentView]);
   // Load issues
   const loadIssues = async (token: string) => {
     try {
@@ -864,40 +929,48 @@ const App: React.FC = () => {
   };
 
   // Load users
+
   const loadUsers = async (token: string) => {
     try {
-      console.log('👥 Loading users...');
+      console.log('ð¥ Loading users...');
       const usersData = await apiCall('/api/users', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      console.log('✅ Users loaded:', usersData.length);
 
-      // Preserve online status from backend when available and default to offline otherwise
-      const usersWithStatus = usersData.map((u: any) => {
+      const usersArray = Array.isArray(usersData)
+        ? usersData
+        : Array.isArray(usersData?.users)
+          ? usersData.users
+          : [];
+
+      console.log('â Users loaded:', usersArray.length);
+
+      const usersWithStatus = usersArray.map((u: any) => {
         const derivedOnline =
-          typeof u.is_online === 'boolean'
-            ? u.is_online
-            : typeof u.online === 'boolean'
-              ? u.online
-              : typeof u.status?.is_online === 'boolean'
-                ? u.status.is_online
-                : undefined;
+          interpretOnlineFlag(u?.is_online) ??
+          interpretOnlineFlag(u?.online) ??
+          interpretOnlineFlag(u?.online_status) ??
+          interpretOnlineFlag(u?.status?.is_online) ??
+          interpretOnlineFlag(u?.status?.online) ??
+          interpretOnlineFlag(u?.presence?.is_online) ??
+          interpretOnlineFlag(u?.presence);
 
         return {
           ...u,
-          is_online: derivedOnline ?? false
+          is_online: derivedOnline ?? false,
         };
       });
 
-      console.log('✅ Users with online status:', usersWithStatus);
+      console.log('â Users with online status:', usersWithStatus);
       setUsers(usersWithStatus);
     } catch (error) {
-      console.error('❌ Failed to load users:', error);
+      console.error('â Failed to load users:', error);
       showToast('error', 'Loading Failed', 'Could not load users');
     }
   };
 
   // WebSocket connection
+
   const connectWebSocket = () => {
     if (!accessToken) return;
 
@@ -905,7 +978,10 @@ const App: React.FC = () => {
 
     if (WS_BASE_URL) {
       wsUrl = `${WS_BASE_URL.replace(/\/$/, '')}/ws/${accessToken}`;
-    } else {
+    } else if (devProxyActivated && isBrowser) {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl = `${protocol}//${window.location.host}/ws/${accessToken}`;
+    } else if (API_BASE_URL) {
       try {
         const apiUrl = new URL(API_BASE_URL);
         const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -913,17 +989,21 @@ const App: React.FC = () => {
         const pathPrefix = sanitizedPath && sanitizedPath !== '/' ? sanitizedPath : '';
         wsUrl = `${wsProtocol}//${apiUrl.host}${pathPrefix}/ws/${accessToken}`;
       } catch (error) {
-        console.warn('⚠️ Failed to derive WebSocket URL from API_BASE_URL, falling back to localhost.', error);
-        wsUrl = `ws://localhost:4000/ws/${accessToken}`;
+        console.warn('â ï¸ Failed to derive WebSocket URL from API_BASE_URL, attempting window location fallback.', error);
       }
     }
 
+    if (!wsUrl && isBrowser) {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl = `${protocol}//${window.location.host}/ws/${accessToken}`;
+    }
+
     if (!wsUrl) {
-      console.error('❌ Unable to determine WebSocket URL.');
+      console.error('â Unable to determine WebSocket URL.');
       return;
     }
 
-    console.log('🔌 Connecting to WebSocket:', wsUrl);
+    console.log('ð Connecting to WebSocket:', wsUrl);
     if (wsRef.current) {
       wsRef.current.close();
     }
@@ -931,15 +1011,15 @@ const App: React.FC = () => {
     wsRef.current = new WebSocket(wsUrl);
 
     wsRef.current.onopen = () => {
-      console.log('✅ WebSocket connected');
+      console.log('â WebSocket connected');
     };
 
     wsRef.current.onerror = (error) => {
-      console.error('❌ WebSocket error:', error);
+      console.error('â WebSocket error:', error);
     };
 
     wsRef.current.onclose = () => {
-      console.log('🔌 WebSocket disconnected');
+      console.log('ð WebSocket disconnected');
       setTimeout(() => {
         if (accessToken) {
           connectWebSocket();
@@ -950,7 +1030,7 @@ const App: React.FC = () => {
     wsRef.current.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log('📨 WebSocket message:', data);
+        console.log('ð¨ WebSocket message:', data);
 
         // Handle incoming chat messages
         if (data.type === 'chat_message' && data.message) {
@@ -988,7 +1068,7 @@ const App: React.FC = () => {
           }
         }
       } catch (error) {
-        console.error('❌ WebSocket message parse error:', error);
+        console.error('â WebSocket message parse error:', error);
       }
     };
   };
@@ -1162,40 +1242,33 @@ const App: React.FC = () => {
 
   const createIssue = async () => {
     if (!newIssue.title.trim()) {
-      console.error('❌ Cannot create issue: Title is empty');
+      console.error('[issues] Cannot create issue: Title is empty');
       showToast('error', 'Validation Error', 'Issue title is required');
       return;
     }
 
-    console.log('📝 Creating new issue:', newIssue.title);
+    if (!accessToken) {
+      showToast('error', 'Not Authenticated', 'Please sign in again to create issues.');
+      return;
+    }
+
+    console.log('[issues] Creating new issue:', newIssue.title);
 
     try {
-      // Convert deadline to ISO format if provided
-      let deadlineISO = null;
-      if (newIssue.deadline) {
-        try {
-          // Convert "dd-mm-yyyy" to ISO datetime
-          const dateObj = new Date(newIssue.deadline);
-          if (!isNaN(dateObj.getTime())) {
-            deadlineISO = dateObj.toISOString();
-          }
-        } catch (e) {
-          console.warn('Invalid deadline format:', newIssue.deadline);
-        }
-      }
 
       const payload = {
-        title: newIssue.title,
-        description: newIssue.description,
-        issue_type: newIssue.issue_type,
-        priority: newIssue.priority,
+        title: newIssue.title.trim(),
+        description: newIssue.description.trim(),
+        issue_type: newIssue.issue_type.toUpperCase(),
+        priority: newIssue.priority.toUpperCase(),
+        status: newIssue.status.toUpperCase(),
         assignee_id: newIssue.assignee_id || null,
-        story_points: newIssue.story_points,
-        labels: newIssue.labels,
-        deadline: deadlineISO
+        story_points: Number(newIssue.story_points) || 0,
+        labels: sanitizeLabels(newIssue.labels),
+        deadline: normalizeDeadline(newIssue.deadline) ?? null
       };
 
-      console.log('📤 Sending issue payload:', payload);
+      console.log('[issues] Sending issue payload:', payload);
 
       const issueData = await apiCall('/api/issues', {
         method: 'POST',
@@ -1203,13 +1276,14 @@ const App: React.FC = () => {
         headers: { 'Authorization': `Bearer ${accessToken}` }
       });
 
-      console.log('✅ Issue created successfully:', issueData.key);
-      setIssues([...issues, issueData]);
+      console.log('[issues] Issue created successfully:', issueData.key);
+      await loadIssues(accessToken);
       setNewIssue({
         title: '',
         description: '',
         issue_type: 'STORY',
         priority: 'MEDIUM',
+        status: 'TODO',
         assignee_id: '',
         story_points: 1,
         labels: [],
@@ -1227,9 +1301,9 @@ const App: React.FC = () => {
         data: issueData
       });
     } catch (error: any) {
-      console.error('❌ Failed to create issue:', error);
-      console.error('❌ Error message:', error.message);
-      console.error('❌ Full error:', JSON.stringify(error));
+      console.error('[issues] Failed to create issue:', error);
+      console.error('[issues] Error message:', error.message);
+      console.error('[issues] Full error:', JSON.stringify(error));
 
       const errorMessage = error.message || error.toString() || 'Failed to create issue';
       setAuthError(errorMessage);
@@ -1237,19 +1311,33 @@ const App: React.FC = () => {
     }
   };
 
-  const updateIssue = async (issueId: string, updates: Partial<Issue>) => {
-    console.log('📝 Updating issue:', issueId, updates);
+  const updateIssue = async (issueId: string, updates: Partial<Issue> & { visibility?: string }): Promise<boolean> => {
+    const payload = buildIssueUpdatePayload(updates);
+    if (!payload || Object.keys(payload).length === 0) {
+      console.log('[issues] No changes detected for issue update:', issueId, updates);
+      return false;
+    }
+
+    if (!accessToken) {
+      showToast('error', 'Not Authenticated', 'Please sign in again to update issues.');
+      return false;
+    }
+
+    console.log('[issues] Updating issue:', issueId, payload);
     try {
       const updatedIssue = await apiCall(`/api/issues/${issueId}`, {
         method: 'PUT',
-        body: JSON.stringify(updates),
+        body: JSON.stringify(payload),
         headers: { 'Authorization': `Bearer ${accessToken}` }
       });
       
-      console.log('✅ Issue updated successfully');
+      console.log('[issues] Issue updated successfully');
       setIssues(prev => prev.map(issue => 
         issue.id === issueId ? updatedIssue : issue
       ));
+      if (selectedIssue?.id === issueId) {
+        setSelectedIssue(updatedIssue);
+      }
       
       showToast('success', 'Issue Updated', `${updatedIssue.key} has been updated`);
       
@@ -1260,10 +1348,138 @@ const App: React.FC = () => {
         read: false,
         data: updatedIssue
       });
+      return true;
     } catch (error: any) {
-      console.error('❌ Failed to update issue:', error.message);
+      console.error('[issues] Failed to update issue:', error);
       setAuthError(error.message || 'Failed to update issue');
       showToast('error', 'Update Failed', error.message || 'Could not update issue');
+      return false;
+    }
+  };
+
+  const deleteIssue = async (issueId: string) => {
+    if (!accessToken) {
+      showToast('error', 'Not Authenticated', 'Please sign in again to delete issues.');
+      return;
+    }
+
+    const issueToRemove = issues.find(issue => issue.id === issueId) || selectedIssue || null;
+
+    console.log('[issues] Deleting issue:', issueId);
+    try {
+      await apiCall(`/api/issues/${issueId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      });
+
+      setIssues(prev => prev.filter(issue => issue.id !== issueId));
+      if (selectedIssue?.id === issueId) {
+        setSelectedIssue(null);
+        setShowIssueModal(false);
+      }
+
+      const issueLabel = issueToRemove?.key ? `${issueToRemove.key}` : issueId;
+
+      showToast('success', 'Issue Deleted', `${issueLabel} was removed successfully`);
+      addNotification({
+        type: 'issue_deleted',
+        title: 'Issue Deleted',
+        message: `${issueLabel} was deleted`,
+        read: false,
+        data: { issueId, key: issueToRemove?.key }
+      });
+    } catch (error: any) {
+      console.error('[issues] Failed to delete issue:', error);
+      showToast('error', 'Delete Failed', error.message || 'Could not delete issue');
+    }
+  };
+
+  const handleIssueEditCancel = () => {
+    hydrateIssueEditDraft(selectedIssue);
+    setIsEditingIssue(false);
+    setIsSavingIssue(false);
+  };
+
+  const handleIssueEditSave = async () => {
+    if (!selectedIssue || !issueEditDraft) {
+      return;
+    }
+
+    const trimmedTitle = issueEditDraft.title.trim();
+    if (!trimmedTitle) {
+      showToast('error', 'Validation Error', 'Issue title is required');
+      return;
+    }
+
+    const updates: Partial<Issue> & { visibility?: string } = {};
+
+    if (trimmedTitle !== selectedIssue.title) {
+      updates.title = trimmedTitle;
+    }
+
+    const trimmedDescription = issueEditDraft.description.trim();
+    const originalDescription = (selectedIssue.description || '').trim();
+    if (trimmedDescription !== originalDescription) {
+      updates.description = trimmedDescription;
+    }
+
+    if (issueEditDraft.status !== selectedIssue.status) {
+      updates.status = issueEditDraft.status;
+    }
+
+    if (issueEditDraft.priority !== selectedIssue.priority) {
+      updates.priority = issueEditDraft.priority;
+    }
+
+    if (issueEditDraft.issue_type !== selectedIssue.issue_type) {
+      updates.issue_type = issueEditDraft.issue_type;
+    }
+
+    const nextAssigneeId = issueEditDraft.assignee_id ? issueEditDraft.assignee_id : null;
+    if ((selectedIssue.assignee_id || null) !== nextAssigneeId) {
+      updates.assignee_id = nextAssigneeId;
+    }
+
+    let storyPointsUpdate: number | null = null;
+    if (issueEditDraft.story_points === '') {
+      storyPointsUpdate = null;
+    } else {
+      const parsedStoryPoints = Number(issueEditDraft.story_points);
+      if (Number.isNaN(parsedStoryPoints)) {
+        showToast('error', 'Validation Error', 'Story points must be a number');
+        return;
+      }
+      storyPointsUpdate = parsedStoryPoints;
+    }
+    const originalStoryPoints = selectedIssue.story_points ?? null;
+    if (storyPointsUpdate !== originalStoryPoints) {
+      updates.story_points = storyPointsUpdate;
+    }
+
+    const nextLabels = sanitizeLabels(issueEditDraft.labels ? issueEditDraft.labels.split(',') : []);
+    const currentLabels = sanitizeLabels(selectedIssue.labels || []);
+    if (!arraysEqual(nextLabels, currentLabels)) {
+      updates.labels = nextLabels;
+    }
+
+    const nextDeadline = issueEditDraft.deadline.trim();
+    const currentDeadline = formatDateForInput(selectedIssue.deadline);
+    if ((nextDeadline || '') !== (currentDeadline || '')) {
+      updates.deadline = nextDeadline ? nextDeadline : null;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      showToast('info', 'No Changes', 'You have not made any changes.');
+      setIsEditingIssue(false);
+      return;
+    }
+
+    setIsSavingIssue(true);
+    const success = await updateIssue(selectedIssue.id, updates);
+    setIsSavingIssue(false);
+
+    if (success) {
+      setIsEditingIssue(false);
     }
   };
 
@@ -1480,10 +1696,6 @@ const App: React.FC = () => {
   const getUserById = (userId: string | null) => {
     if (!userId) return null;
     return users.find(u => u.id === userId);
-  };
-
-  const getIssuesByStatus = (status: Issue['status']) => {
-    return issues.filter(issue => issue.status === status);
   };
 
   // Drag and Drop
@@ -2980,19 +3192,50 @@ const App: React.FC = () => {
       setUsers(updatedUsers);
     };
 
+
     const apiCall = async (endpoint: string, options?: RequestInit) => {
       const token = localStorage.getItem('accessToken');
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          ...options?.headers
-        }
+      const headersFromOptions = options?.headers instanceof Headers
+        ? Object.fromEntries(options.headers.entries())
+        : (options?.headers as Record<string, string> | undefined) ?? {};
+
+      const buildHeaders = () => ({
+        'Content-Type': 'application/json',
+        Authorization: token ? `Bearer ${token}` : '',
+        ...headersFromOptions,
       });
 
-      if (!response.ok) throw new Error('API call failed');
-      return await response.json();
+      const { headers: _ignored, ...restOptions } = options || {};
+      const initialBase = devProxyActivated || !API_BASE_URL ? '' : API_BASE_URL;
+      const allowProxyFallback = !devProxyActivated && !devProxyDisabled && !!API_BASE_URL && isLocalhostEnv();
+
+      const attempt = async (base: string, enableProxyFallback: boolean): Promise<any> => {
+        const targetUrl = buildApiUrl(base, endpoint);
+        let response: Response;
+        try {
+          response = await fetch(targetUrl, {
+            ...restOptions,
+            headers: buildHeaders(),
+          });
+        } catch (networkError) {
+          if (enableProxyFallback) {
+            console.warn('Network error during admin API call, retrying via dev proxy fallback.', { endpoint, targetUrl, networkError });
+            devProxyActivated = true;
+            return attempt('', false);
+          }
+          throw networkError;
+        }
+
+        if (!response.ok) throw new Error('API call failed');
+        return response.json();
+      };
+
+      try {
+        return await attempt(initialBase, allowProxyFallback);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Admin API call failed: ${message}`);
+      }
     };
 
     return (
@@ -3768,7 +4011,7 @@ const App: React.FC = () => {
   // ============= CHAT FUNCTIONS =============
 
   // Get or create conversation
-  const getOrCreateConversation = async (participantId: string | null): Promise<string | null> => {
+  const getOrCreateConversation = useCallback(async (participantId: string | null): Promise<string | null> => {
     try {
       if (!participantId) {
         // Team chat - get or create team conversation
@@ -3850,10 +4093,10 @@ const App: React.FC = () => {
       showToast('error', 'Error', error.message || 'Failed to load conversation');
       return null;
     }
-  };
+  }, [accessToken, apiCall, showToast, user, users]);
 
   // Load messages for conversation
-  const loadConversationMessages = async (conversationId: string) => {
+  const loadConversationMessages = useCallback(async (conversationId: string) => {
     try {
       console.log('Loading messages for conversation:', conversationId);
       const response = await apiCall(`/api/chat/conversations/${conversationId}/messages`, {
@@ -3967,7 +4210,7 @@ const App: React.FC = () => {
       console.error('Error loading messages:', error);
       showToast('error', 'Error', error.message || 'Failed to load messages');
     }
-  };
+  }, [accessToken, apiCall, showChatPopup, showToast, user]);
 
   // Send message via API
   const sendMessageAPI = async (content: string, conversationId: string) => {
@@ -4008,22 +4251,22 @@ const App: React.FC = () => {
     }
   };
 
-  // Load team chat when popup opens
-  useEffect(() => {
-    if (showChatPopup && !selectedConversationId) {
-      // Auto-load team chat when opening
-      handleChatSelectionInit(null);
-    }
-  }, [showChatPopup]);
-
-  const handleChatSelectionInit = async (userId: string | null) => {
+  const handleChatSelectionInit = useCallback(async (userId: string | null) => {
     const conversationId = await getOrCreateConversation(userId);
     if (conversationId) {
       setSelectedConversationId(conversationId);
       setSelectedChatUser(userId);
       await loadConversationMessages(conversationId);
     }
-  };
+  }, [getOrCreateConversation, loadConversationMessages]);
+
+  // Load team chat when popup opens
+  useEffect(() => {
+    if (showChatPopup && !selectedConversationId) {
+      // Auto-load team chat when opening
+      handleChatSelectionInit(null);
+    }
+  }, [handleChatSelectionInit, selectedConversationId, showChatPopup]);
 
   // Poll for new messages
   useEffect(() => {
@@ -4037,7 +4280,7 @@ const App: React.FC = () => {
     const interval = setInterval(pollMessages, 3000);
 
     return () => clearInterval(interval);
-  }, [selectedConversationId, accessToken]);
+  }, [accessToken, loadConversationMessages, selectedConversationId]);
 
   const renderFloatingChat = () => {
     if (!showChatPopup) return null;
@@ -4725,10 +4968,34 @@ const App: React.FC = () => {
                 <option value="HIGH">High</option>
                 <option value="HIGHEST">Highest</option>
               </select>
-            </div>
           </div>
+        </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', color: '#94a3b8', fontSize: '13px' }}>Initial Status</label>
+          <select
+            value={newIssue.status}
+            onChange={(e) => setNewIssue({ ...newIssue, status: e.target.value as Issue['status'] })}
+            style={{
+              width: '100%',
+              padding: '12px',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '6px',
+              fontSize: '14px',
+              outline: 'none',
+              background: 'rgba(15,23,42,0.5)',
+              color: '#e2e8f0',
+              cursor: 'pointer'
+            }}
+          >
+            <option value="TODO">To Do</option>
+            <option value="IN_PROGRESS">In Progress</option>
+            <option value="REVIEW">In Review</option>
+            <option value="DONE">Done</option>
+          </select>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
             <div>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500', color: '#94a3b8', fontSize: '13px' }}>Assignee</label>
               <select
@@ -4921,74 +5188,351 @@ const App: React.FC = () => {
             </button>
           </div>
 
-          <div style={{ marginBottom: '20px' }}>
-            <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#172b4d' }}>Description</h4>
-            <p style={{ margin: 0, color: '#6b778c', lineHeight: '1.5' }}>
-              {selectedIssue.description || 'No description provided.'}
-            </p>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-            <div>
-              <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#172b4d' }}>Assignee</h4>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{
-                  width: '24px',
-                  height: '24px',
-                  borderRadius: '50%',
-                  background: selectedIssue.assignee_id ? 'linear-gradient(135deg, #6554c0, #9575cd)' : '#ccc',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '10px',
-                  fontWeight: '600',
-                  color: 'white'
-                }}>
-                  {selectedIssue.assignee_id ? getUserById(selectedIssue.assignee_id)?.avatar || 'UN' : 'UN'}
-                </div>
-                <span style={{ fontSize: '14px', color: '#172b4d' }}>
-                  {selectedIssue.assignee_id ? getUserById(selectedIssue.assignee_id)?.name || 'Unknown User' : 'Unassigned'}
-                </span>
+          {!isEditingIssue && (
+            <>
+              <div style={{ marginBottom: '20px' }}>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#172b4d' }}>Description</h4>
+                <p style={{ margin: 0, color: '#6b778c', lineHeight: '1.5' }}>
+                  {selectedIssue.description || 'No description provided.'}
+                </p>
               </div>
-            </div>
-            <div>
-              <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#172b4d' }}>Story Points</h4>
-              <span style={{ fontSize: '14px', color: '#172b4d' }}>{selectedIssue.story_points}</span>
-            </div>
-          </div>
 
-          {selectedIssue.labels && selectedIssue.labels.length > 0 && (
-            <div style={{ marginBottom: '20px' }}>
-              <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#172b4d' }}>Labels</h4>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {selectedIssue.labels.map((label, index) => (
-                  <span
-                    key={index}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+                <div>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#172b4d' }}>Assignee</h4>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{
+                      width: '24px',
+                      height: '24px',
+                      borderRadius: '50%',
+                      background: selectedIssue.assignee_id ? 'linear-gradient(135deg, #6554c0, #9575cd)' : '#ccc',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '10px',
+                      fontWeight: '600',
+                      color: 'white'
+                    }}>
+                      {selectedIssue.assignee_id ? getUserById(selectedIssue.assignee_id)?.avatar || 'UN' : 'UN'}
+                    </div>
+                    <span style={{ fontSize: '14px', color: '#172b4d' }}>
+                      {selectedIssue.assignee_id ? getUserById(selectedIssue.assignee_id)?.name || 'Unknown User' : 'Unassigned'}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#172b4d' }}>Story Points</h4>
+                  <span style={{ fontSize: '14px', color: '#172b4d' }}>{selectedIssue.story_points}</span>
+                </div>
+              </div>
+
+              {selectedIssue.labels && selectedIssue.labels.length > 0 && (
+                <div style={{ marginBottom: '20px' }}>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#172b4d' }}>Labels</h4>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {selectedIssue.labels.map((label, index) => (
+                      <span
+                        key={index}
+                        style={{
+                          background: '#f4f5f7',
+                          color: '#6b778c',
+                          padding: '4px 8px',
+                          borderRadius: '12px',
+                          fontSize: '11px',
+                          fontWeight: '600'
+                        }}
+                      >
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {isEditingIssue && issueEditDraft && (
+            <div style={{
+              marginTop: '16px',
+              marginBottom: '24px',
+              padding: '20px',
+              borderRadius: '12px',
+              border: '1px solid #e5e7eb',
+              background: '#f9fafb'
+            }}>
+              <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 600, color: '#111827' }}>Edit Issue</h3>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>Title *</label>
+                <input
+                  type="text"
+                  value={issueEditDraft.title}
+                  onChange={(e) => setIssueEditDraft(prev => prev ? { ...prev, title: e.target.value } : prev)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    border: '1px solid #cbd5f5',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    color: '#111827'
+                  }}
+                  placeholder="Update the issue title"
+                />
+              </div>
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>Description</label>
+                <textarea
+                  value={issueEditDraft.description}
+                  onChange={(e) => setIssueEditDraft(prev => prev ? { ...prev, description: e.target.value } : prev)}
+                  rows={4}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: '1px solid #cbd5f5',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    color: '#111827',
+                    resize: 'vertical',
+                    fontFamily: 'inherit'
+                  }}
+                  placeholder="Describe the latest details..."
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '16px', marginBottom: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>Type</label>
+                  <select
+                    value={issueEditDraft.issue_type}
+                    onChange={(e) => setIssueEditDraft(prev => prev ? { ...prev, issue_type: e.target.value as Issue['issue_type'] } : prev)}
                     style={{
-                      background: '#f4f5f7',
-                      color: '#6b778c',
-                      padding: '4px 8px',
-                      borderRadius: '12px',
-                      fontSize: '11px',
-                      fontWeight: '600'
+                      width: '100%',
+                      padding: '10px 12px',
+                      border: '1px solid #cbd5f5',
+                      borderRadius: '6px',
+                      fontSize: '14px'
                     }}
                   >
-                    {label}
-                  </span>
-                ))}
+                    <option value="STORY">Story</option>
+                    <option value="TASK">Task</option>
+                    <option value="BUG">Bug</option>
+                    <option value="EPIC">Epic</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>Priority</label>
+                  <select
+                    value={issueEditDraft.priority}
+                    onChange={(e) => setIssueEditDraft(prev => prev ? { ...prev, priority: e.target.value as Issue['priority'] } : prev)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      border: '1px solid #cbd5f5',
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}
+                  >
+                    <option value="LOWEST">Lowest</option>
+                    <option value="LOW">Low</option>
+                    <option value="MEDIUM">Medium</option>
+                    <option value="HIGH">High</option>
+                    <option value="HIGHEST">Highest</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>Status</label>
+                  <select
+                    value={issueEditDraft.status}
+                    onChange={(e) => setIssueEditDraft(prev => prev ? { ...prev, status: e.target.value as Issue['status'] } : prev)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      border: '1px solid #cbd5f5',
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}
+                  >
+                    <option value="TODO">To Do</option>
+                    <option value="IN_PROGRESS">In Progress</option>
+                    <option value="REVIEW">In Review</option>
+                    <option value="DONE">Done</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>Assignee</label>
+                  <select
+                    value={issueEditDraft.assignee_id}
+                    onChange={(e) => setIssueEditDraft(prev => prev ? { ...prev, assignee_id: e.target.value } : prev)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      border: '1px solid #cbd5f5',
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}
+                  >
+                    <option value="">Unassigned</option>
+                    {users
+                      .filter(u => u.organization_id === user?.organization_id && u.is_active)
+                      .map(u => (
+                        <option key={u.id} value={u.id}>{u.name}</option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>Story Points</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={issueEditDraft.story_points}
+                    onChange={(e) => setIssueEditDraft(prev => prev ? { ...prev, story_points: e.target.value } : prev)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      border: '1px solid #cbd5f5',
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}
+                    placeholder="e.g. 3"
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>Deadline</label>
+                  <input
+                    type="date"
+                    value={issueEditDraft.deadline}
+                    onChange={(e) => setIssueEditDraft(prev => prev ? { ...prev, deadline: e.target.value } : prev)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      border: '1px solid #cbd5f5',
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#374151', marginBottom: '6px' }}>Labels</label>
+                  <input
+                    type="text"
+                    value={issueEditDraft.labels}
+                    onChange={(e) => setIssueEditDraft(prev => prev ? { ...prev, labels: e.target.value } : prev)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      border: '1px solid #cbd5f5',
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}
+                    placeholder="Comma separated labels"
+                  />
+                </div>
               </div>
             </div>
           )}
 
-          <CommentSection
-            comments={selectedIssue.comments || []}
-            users={users}
-            onAddComment={(content) => addComment(selectedIssue.id, content)}
-            currentUserId={user?.id || ''}
-          />
-        </div>
-      </div>
-    )
+          {!isEditingIssue && (
+            <CommentSection
+              comments={selectedIssue.comments || []}
+              users={users}
+              onAddComment={(content) => addComment(selectedIssue.id, content)}
+              currentUserId={user?.id || ''}
+            />
+          )}
+
+          {user && ['super_admin', 'admin', 'project_manager'].includes(user.role) && (
+            <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end', gap: '12px', flexWrap: 'wrap' }}>
+              {isEditingIssue ? (
+                <>
+                  <button
+                    onClick={handleIssueEditCancel}
+                    style={{
+                      background: 'white',
+                      color: '#374151',
+                      border: '1px solid #d1d5db',
+                      padding: '10px 16px',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleIssueEditSave}
+                    disabled={isSavingIssue || !issueEditDraft?.title.trim()}
+                    style={{
+                      background: isSavingIssue || !issueEditDraft?.title.trim() ? '#9ca3af' : '#2563eb',
+                      color: 'white',
+                      border: 'none',
+                      padding: '10px 20px',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: isSavingIssue || !issueEditDraft?.title.trim() ? 'not-allowed' : 'pointer',
+                      boxShadow: isSavingIssue || !issueEditDraft?.title.trim() ? 'none' : '0 4px 12px rgba(37,99,235,0.3)'
+                    }}
+                  >
+                    {isSavingIssue ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    disabled={!issueEditDraft}
+                    onClick={() => {
+                      hydrateIssueEditDraft(selectedIssue);
+                      setIsEditingIssue(true);
+                    }}
+                    style={{
+                      background: 'white',
+                      color: '#2563eb',
+                      border: '1px solid #2563eb',
+                      padding: '10px 16px',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: issueEditDraft ? 'pointer' : 'not-allowed',
+                      opacity: issueEditDraft ? 1 : 0.6
+                    }}
+                  >
+                    Edit Issue
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (window.confirm('Are you sure you want to delete this issue? This action cannot be undone.')) {
+                        deleteIssue(selectedIssue.id);
+                      }
+                    }}
+                    style={{
+                      background: '#b91c1c',
+                      color: 'white',
+                      border: 'none',
+                      padding: '10px 16px',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 12px rgba(185,28,28,0.3)'
+                    }}
+                  >
+                    Delete Issue
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+    </div>
+  </div>
+)
   );
 
   // Import/Export Modal
@@ -5432,4 +5976,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-
