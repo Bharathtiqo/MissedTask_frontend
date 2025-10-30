@@ -87,6 +87,33 @@ type IssueEditDraft = {
   labels: string;
   deadline: string;
 };
+type AppView = 'auth' | 'dashboard' | 'board' | 'admin' | 'profile' | 'settings';
+
+const VIEW_TO_PATH: Record<AppView, string> = {
+  auth: '/auth',
+  dashboard: '/home',
+  board: '/board',
+  admin: '/adminpanel',
+  profile: '/profile',
+  settings: '/settings'
+};
+
+const normalizePath = (path: string): string => {
+  if (!path || path === '/') {
+    return '/';
+  }
+  return path.replace(/\/+$/, '') || '/';
+};
+
+const PATH_TO_VIEW: Record<string, AppView> = Object.entries(VIEW_TO_PATH).reduce(
+  (acc, [view, path]) => {
+    acc[normalizePath(path)] = view as AppView;
+    return acc;
+  },
+  {} as Record<string, AppView>
+);
+PATH_TO_VIEW['/'] = 'dashboard';
+
 
 // API Base URL - fallback to localhost for development
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'https://missedtask-backend-2.onrender.com';
@@ -453,7 +480,7 @@ const App: React.FC = () => {
   const [issues, setIssues] = useState<Issue[]>([]);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [currentView, setCurrentView] = useState<'auth' | 'dashboard' | 'board' | 'admin' | 'profile' | 'settings'>('auth');
+  const [currentView, setCurrentView] = useState<AppView>('auth');
   const [authMode, setAuthMode] = useState<'login' | 'signup' | 'verify-otp'>('login');
   const [signupMode, setSignupMode] = useState<'create_org' | 'join_org'>('create_org');
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -505,6 +532,37 @@ const App: React.FC = () => {
     recipientId?: string; // For direct messages
   }>>([]);
   const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
+
+
+  const navigateToView = useCallback((view: AppView, options: { replace?: boolean } = {}) => {
+    setCurrentView(view);
+    if (!isBrowser) return;
+
+    const targetPath = VIEW_TO_PATH[view];
+    const normalizedTarget = normalizePath(targetPath);
+    const normalizedCurrent = normalizePath(window.location.pathname);
+    const method: 'replaceState' | 'pushState' = options.replace ? 'replaceState' : 'pushState';
+
+    if (normalizedCurrent !== normalizedTarget) {
+      window.history[method]({ view }, '', targetPath);
+    } else if (options.replace) {
+      window.history.replaceState({ view }, '', targetPath);
+    }
+  }, [setCurrentView]);
+
+  useEffect(() => {
+    if (!isBrowser) return;
+
+    const syncViewFromLocation = () => {
+      const normalized = normalizePath(window.location.pathname);
+      const nextView = PATH_TO_VIEW[normalized] || 'dashboard';
+      setCurrentView(nextView);
+    };
+
+    window.addEventListener('popstate', syncViewFromLocation);
+    syncViewFromLocation();
+    return () => window.removeEventListener('popstate', syncViewFromLocation);
+  }, []);
 
   // Profile and Settings states
   const [profileForm, setProfileForm] = useState({
@@ -724,7 +782,7 @@ const App: React.FC = () => {
             localStorage.removeItem('accessToken');
             localStorage.removeItem('user');
             localStorage.removeItem('organization');
-            setCurrentView('auth');
+            navigateToView('auth', { replace: true });
             return;
           }
 
@@ -734,7 +792,7 @@ const App: React.FC = () => {
           setUser(parsedUser);
           setOrganization(parsedOrg);
           setIsAuthenticated(true);
-          setCurrentView('dashboard');
+          navigateToView('dashboard');
 
           // Load data
           loadIssues(savedToken);
@@ -745,7 +803,7 @@ const App: React.FC = () => {
           localStorage.removeItem('accessToken');
           localStorage.removeItem('user');
           localStorage.removeItem('organization');
-          setCurrentView('auth');
+          navigateToView('auth', { replace: true });
         }
       } else {
         console.log('📝 No saved session found, showing auth screen');
@@ -876,7 +934,7 @@ const App: React.FC = () => {
           setUser(null);
           setOrganization(null);
           setIsAuthenticated(false);
-          setCurrentView('auth');
+          navigateToView('auth', { replace: true });
           showToast('warning', 'Session Expired', 'Please login again');
           throw new Error('Session expired. Please login again.');
         }
@@ -1105,7 +1163,7 @@ const App: React.FC = () => {
       
       console.log('💾 Session saved to localStorage');
       
-      setCurrentView('dashboard');
+      navigateToView('dashboard');
       
       // Load data
       await loadIssues(data.access_token);
@@ -1188,7 +1246,7 @@ const App: React.FC = () => {
       setUser(data.user);
       setOrganization(data.organization);
       setIsAuthenticated(true);
-      setCurrentView('dashboard');
+      navigateToView('dashboard');
       loadUsers(data.access_token);
       loadIssues(data.access_token);
       connectWebSocket();
@@ -1224,7 +1282,7 @@ const App: React.FC = () => {
     setOrganization(null);
     setAccessToken('');
     setIsAuthenticated(false);
-    setCurrentView('auth');
+    navigateToView('auth', { replace: true });
     setAuthMode('login');
     setIssues([]);
     setUsers([]);
@@ -2516,7 +2574,7 @@ const App: React.FC = () => {
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowProfileMenu(false);
-                    setCurrentView('profile');
+                    navigateToView('profile');
                   }}
                   style={{
                     width: '100%',
@@ -2546,7 +2604,7 @@ const App: React.FC = () => {
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowProfileMenu(false);
-                    setCurrentView('settings');
+                    navigateToView('settings');
                   }}
                   style={{
                     width: '100%',
@@ -2601,7 +2659,7 @@ const App: React.FC = () => {
                   onMouseEnter={(e) => e.currentTarget.style.background = '#fef2f2'}
                   onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                 >
-                  <span style={{ fontSize: '18px' }}>🚪</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center' }}>{Icons.logout(18)}</span>
                   <span style={{ fontWeight: '500' }}>Logout</span>
                 </button>
               </div>
@@ -2628,7 +2686,7 @@ const App: React.FC = () => {
     }}>
       <nav>
         <button
-          onClick={() => setCurrentView('dashboard')}
+          onClick={() => navigateToView('dashboard')}
           style={{
             width: '100%',
             background: currentView === 'dashboard' ? '#1e40af' : 'transparent',
@@ -2656,7 +2714,7 @@ const App: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setCurrentView('board')}
+          onClick={() => navigateToView('board')}
           style={{
             width: '100%',
             background: currentView === 'board' ? '#1e40af' : 'transparent',
@@ -2681,9 +2739,9 @@ const App: React.FC = () => {
         </button>
 
         {/* Create Issue - Only for admin, super_admin, and project_manager */}
-        {user && ['super_admin', 'admin', 'project_manager'].includes(user.role) && (
+        {canCreateIssues && (
           <button
-            onClick={() => setShowCreateModal(true)}
+            onClick={openCreateIssueModal}
             style={{
               width: '100%',
               background: 'transparent',
@@ -2712,7 +2770,7 @@ const App: React.FC = () => {
         {/* Admin Panel - Only for Super Admin */}
         {user?.role === 'super_admin' && (
           <button
-            onClick={() => setCurrentView('admin')}
+            onClick={() => navigateToView('admin')}
             style={{
               width: '100%',
               background: currentView === 'admin' ? '#1e40af' : 'transparent',
@@ -2773,7 +2831,7 @@ const App: React.FC = () => {
 
   const renderDashboard = () => {
     // Filter issues based on user role
-    const filteredIssues = user && ['super_admin', 'admin', 'project_manager'].includes(user.role)
+    const filteredIssues = canCreateIssues
       ? issues // Admins see all issues
       : issues.filter(issue => issue.assignee_id === user?.id); // Employees only see their assigned tasks
 
@@ -2910,13 +2968,13 @@ const App: React.FC = () => {
             </div>
             <h4 style={{ margin: '0 0 8px 0' }}>No issues yet</h4>
             <p style={{ margin: 0, fontSize: '14px' }}>
-              {user && ['super_admin', 'admin', 'project_manager'].includes(user.role)
+              {canCreateIssues
                 ? 'Create your first issue to get started'
                 : 'No tasks assigned to you yet'}
             </p>
-            {user && ['super_admin', 'admin', 'project_manager'].includes(user.role) && (
+            {canCreateIssues && (
               <button
-                onClick={() => setShowCreateModal(true)}
+                onClick={openCreateIssueModal}
                 style={{
                   marginTop: '16px',
                   background: '#0052cc',
@@ -2940,7 +2998,7 @@ const App: React.FC = () => {
 
   const renderBoard = () => {
     // Filter issues based on user role
-    const filteredIssues = user && ['super_admin', 'admin', 'project_manager'].includes(user.role)
+    const filteredIssues = canCreateIssues
       ? issues // Admins see all issues
       : issues.filter(issue => issue.assignee_id === user?.id); // Employees only see their assigned tasks
 
@@ -3162,7 +3220,7 @@ const App: React.FC = () => {
                   <div>No issues in {column.title}</div>
                   {column.status === 'TODO' && (
                     <button
-                      onClick={() => setShowCreateModal(true)}
+                      onClick={openCreateIssueModal}
                       style={{
                         marginTop: '12px',
                         background: 'transparent',
@@ -3598,7 +3656,7 @@ const App: React.FC = () => {
                   {isLoading ? 'Saving...' : 'Save Changes'}
                 </button>
                 <button
-                  onClick={() => setCurrentView('dashboard')}
+                  onClick={() => navigateToView('dashboard')}
                   style={{
                     padding: '12px 24px',
                     background: 'transparent',
@@ -3971,7 +4029,7 @@ const App: React.FC = () => {
         {/* Action Buttons */}
         <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
           <button
-            onClick={() => setCurrentView('dashboard')}
+            onClick={() => navigateToView('dashboard')}
             style={{
               padding: '12px 24px',
               background: 'rgba(255,255,255,0.05)',
@@ -5447,7 +5505,7 @@ const App: React.FC = () => {
             />
           )}
 
-          {user && ['super_admin', 'admin', 'project_manager'].includes(user.role) && (
+          {canCreateIssues && (
             <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'flex-end', gap: '12px', flexWrap: 'wrap' }}>
               {isEditingIssue ? (
                 <>
